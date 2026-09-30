@@ -1,0 +1,22 @@
+name: Gate-0 provisional issuer (refuses)
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  gate0_issuer:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    runs-on:
+      group: gate0-issuer-protected
+    environment: rehearsal-issuer-protected
+    permissions:
+      id-token: write
+    timeout-minutes: 5
+    steps:
+      - name: Refuse until the real issuer connector is admitted
+        shell: bash
+        run: |
+          echo "Gate-0 issuer connector is unavailable; no authorization was issued." >&2
+          exit 1
