@@ -70,30 +70,14 @@ class Gate0PolicyTests(unittest.TestCase):
                 path.write_text(original.replace(old, new, 1), encoding="utf-8")
                 self.assertTrue(policy_errors(self.root))
 
-    def test_temporary_probe_boundaries_reject_mutations(self) -> None:
+    def test_retired_probe_surface_cannot_return(self) -> None:
         path = self.workflows / "policy.yml"
         original = EXPECTED_WORKFLOWS[path.name]
         changes = {
-            "dispatch trigger": ("  workflow_dispatch:\n", "  workflow_call:\n"),
-            "PR target trigger": ("  pull_request_target:\n    branches: [main]", "  schedule:\n    branches: [main]"),
-            "PR target base": ("  pull_request_target:\n    branches: [main]", "  pull_request_target:\n    branches: [dev]"),
-            "group job event guard": (
-                "  probe_group:\n    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}",
-                "  probe_group:\n    if: ${{ always() }}",
-            ),
-            "label job event guard": (
-                "  probe_label:\n    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}",
-                "  probe_label:\n    if: ${{ always() }}",
-            ),
-            "group selector": ("      group: gate0-issuer-protected", "      group: general"),
-            "group label": ("      labels: gate0-managed-20261001-only", "      labels: general"),
-            "label-only selector": ("    runs-on: gate0-managed-20261001-only", "    runs-on: ubuntu-latest"),
-            "job permissions": ("    permissions: {}", "    permissions:\n      id-token: write"),
-            "no environment": ("    timeout-minutes: 1", "    environment: rehearsal-issuer-protected\n    timeout-minutes: 1"),
-            "short timeout": ("    timeout-minutes: 1", "    timeout-minutes: 5"),
-            "no checkout": ("        shell: bash", "        uses: actions/checkout@v4\n        shell: bash"),
-            "failure marker": ("          echo \"SCHEDULING_REFUSAL_FAILED\" >&2", "          echo \"admitted\" >&2"),
-            "failure exit": ("          exit 1", "          exit 0"),
+            "dispatch trigger": ("on:\n  pull_request:", "on:\n  workflow_dispatch:\n  pull_request:"),
+            "PR target trigger": ("on:\n  pull_request:", "on:\n  pull_request_target:\n  pull_request:"),
+            "group probe": ("jobs:\n  source_policy:", "jobs:\n  probe_group:\n    runs-on:\n      group: gate0-issuer-protected\n  source_policy:"),
+            "label probe": ("jobs:\n  source_policy:", "jobs:\n  probe_label:\n    runs-on: gate0-managed-20261001-only\n  source_policy:"),
         }
         for boundary, (old, new) in changes.items():
             with self.subTest(boundary=boundary):
