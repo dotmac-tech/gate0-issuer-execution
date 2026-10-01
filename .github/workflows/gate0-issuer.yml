@@ -1,4 +1,4 @@
-name: Gate-0 provisional issuer (refuses)
+name: Gate-0 inert wrong-ref scheduling probe
 
 on:
   workflow_dispatch:
@@ -7,16 +7,14 @@ permissions: {}
 
 jobs:
   gate0_issuer:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
     runs-on:
       group: gate0-issuer-protected
-    environment: rehearsal-issuer-protected
-    permissions:
-      id-token: write
-    timeout-minutes: 5
+      labels: gate0-managed-20261001-only
+    permissions: {}
+    timeout-minutes: 1
     steps:
-      - name: Refuse until the real issuer connector is admitted
+      - name: Fail if protected group admits a wrong ref
         shell: bash
         run: |
-          echo "Gate-0 issuer connector is unavailable; no authorization was issued." >&2
+          echo "SCHEDULING_REFUSAL_FAILED" >&2
           exit 1
