@@ -5,9 +5,8 @@ owns the operator workflow and readiness receipt. This repository owns neither
 issuer decisions nor target execution authority.
 
 Current source is **provisional**. The `Gate-0 source drift check` runs on a
-GitHub-hosted runner for pull requests, pull-request-target events into `main`,
-manual dispatches, and pushes to `main`; it checks an exact allowlist of the
-two workflow files with Python's standard library. Run it
+GitHub-hosted runner for pull requests and pushes to `main`; it checks an exact
+allowlist of the two workflow files with Python's standard library. Run it
 locally with `python3 -B -m unittest discover -s tests -v`. The protected workflow
 is directly defined in `.github/workflows/gate0-issuer.yml`; its protected
 job schedules only for a manual dispatch from `main`. It requests only
@@ -32,26 +31,19 @@ Do not register or attach a privileged runner based on this source or a green
 static check. Public source, variables, logs, and artifacts must contain no
 secrets, credentials, host addresses, or private topology.
 
-Temporary live scheduling probes are added to `policy.yml` from source base
-`f218660b6ff7c3a01b877e6ab080efcd31672805`; the privileged issuer workflow
-remains byte-identical. On manual dispatch, pull request, and pull-request-target
-events, two inert jobs target the protected runner group plus its managed label,
-and the managed label alone. They have no token permissions, environment,
-checkout, secrets, artifacts, or privileged steps. If either runs, it prints
-`SCHEDULING_REFUSAL_FAILED` and exits with failure. The source-policy job stays
-on a GitHub-hosted runner; its pull-request-target checkout uses `main` as the
-base branch through the normal checkout default.
+The temporary negative scheduling probes introduced at
+`4cee4925014614aed460c7f5fc888385f39264f9` are retired in this source:
+`policy.yml` again has only the GitHub-hosted `source_policy` job, triggered by
+pull requests and pushes to `main`. The privileged issuer workflow remains
+byte-identical. Source removal does not prove the live negative observations,
+queued-run cancellation, or protected-`main` merge; those require separate
+read-backs. A queued job without a confirmed online protected runner is
+inconclusive, and an assigned runner or executed probe is a failed refusal.
 
-The expected negative result is both probe jobs queued with `runner_id: null`
-during a fixed observation window while the sole canary in the protected group
-is confirmed online. A queued job without that online read-back is inconclusive;
-an assigned runner or executed probe is a failed refusal. The primary operator
-will cancel the queued runs after observation. These probes make no security
-claim on their own. A follow-up source change removes both probe jobs and their
-temporary dispatch and pull-request-target triggers through a protected-`main`
-pull request. Before the final positive issuer dispatch, record the merged
-removal commit SHA, a green `source_policy` check and workflow read-back at that
-exact SHA, the unchanged issuer workflow SHA-256
+Before the final positive issuer dispatch, record the merged cleanup commit
+SHA, a green `source_policy` check and workflow read-back at that exact SHA,
+the unchanged issuer workflow SHA-256
 `2a62feee21d8236de28e21bb8850c4e0388a39f71cce4338b1c60e0741b876fd`,
-and a fresh runner/group online read-back. Only then proceed to the protected
-dispatch with Michael's Environment review.
+the live negative probe evidence and cancellation, and a fresh runner/group
+online read-back. Only then proceed to the protected dispatch with Michael's
+Environment review. This source change alone is not Gate-0 closure.
