@@ -1,5 +1,8 @@
 # gate0-issuer-execution
 
+Temporary same-repository PR fixture: this documentation-only change exercises
+the inert base-branch scheduling probes and is never merged.
+
 Public execution surface for the protected Gate-0 rehearsal issuer. Platform CP
 owns the operator workflow and readiness receipt. This repository owns neither
 issuer decisions nor target execution authority.
