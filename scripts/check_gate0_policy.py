@@ -36,7 +36,10 @@ jobs:
     "policy.yml": """name: Gate-0 source drift check
 
 on:
+  workflow_dispatch:
   pull_request:
+  pull_request_target:
+    branches: [main]
   push:
     branches: [main]
 
@@ -55,6 +58,32 @@ jobs:
         run: python3 -B scripts/check_gate0_policy.py
       - name: Verify workflow boundaries and mutation sensitivity
         run: python3 -B -m unittest discover -s tests -v
+
+  probe_group:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+    runs-on:
+      group: gate0-issuer-protected
+      labels: gate0-managed-20261001-only
+    permissions: {}
+    timeout-minutes: 1
+    steps:
+      - name: Fail if protected group admits this workflow
+        shell: bash
+        run: |
+          echo "SCHEDULING_REFUSAL_FAILED" >&2
+          exit 1
+
+  probe_label:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+    runs-on: gate0-managed-20261001-only
+    permissions: {}
+    timeout-minutes: 1
+    steps:
+      - name: Fail if protected label admits this workflow
+        shell: bash
+        run: |
+          echo "SCHEDULING_REFUSAL_FAILED" >&2
+          exit 1
 """,
 }
 
