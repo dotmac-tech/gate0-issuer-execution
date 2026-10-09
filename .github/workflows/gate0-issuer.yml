@@ -13,7 +13,7 @@ jobs:
     environment: rehearsal-issuer-protected
     permissions:
       id-token: write
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - name: Prove protected OIDC and scoped SSH capability
         shell: bash
@@ -174,7 +174,16 @@ jobs:
                           raw = response.read()
                           return response.status, json.loads(raw) if raw else {}
                   except urllib.error.HTTPError as error:
-                      return error.code, {}  # Never expose server error bodies or credentials.
+                      # Return only an expiry classification; never expose the server body.
+                      raw = error.read(8192)
+                      try:
+                          errors = json.loads(raw).get('errors', [])
+                          expired = isinstance(errors, list) and any(
+                              isinstance(message, str) and ('token is expired' in message.lower()
+                              or 'token expired' in message.lower()) for message in errors)
+                      except (ValueError, AttributeError):
+                          expired = False
+                      return error.code, {'expiry_error': expired}
               return api
 
 
@@ -191,17 +200,44 @@ jobs:
               return 'ssh-ed25519 ' + base64.b64encode(blob).decode(), raw
 
 
-          def prove(api, request_oidc, public_key, raw_public, run_id, attempt, check_certificate=certificate_info):
+          def expiration_proof(api, jwt, token, request, jwt_exp, token_expiry_bound,
+                               clock=time.time, pause=time.sleep, elapsed=time.monotonic):
+              # Start AFTER the positive exchange. Use observed JWT exp and a conservative
+              # token deadline measured after the successful login response, plus margin.
+              deadline = max(jwt_exp, token_expiry_bound) + 5
+              start = elapsed()
+              while clock() < deadline:
+                  remaining = deadline - clock()
+                  if remaining > 610 or elapsed() - start > 620:
+                      raise ValueError('expiry wait exceeds bounded proof window')
+                  pause(min(10, remaining))
+              status, health = api('sys/health')
+              if status != 200 or health.get('sealed') is not False:
+                  raise ValueError('OpenBao unhealthy during expiry check')
+              status, response = api('auth/jwt/login', {'role': 'rehearsal-issuer-protected', 'jwt': jwt})
+              if status != 400 or response.get('expiry_error') is not True or response.get('auth'):
+                  raise ValueError('expired GitHub token not specifically refused for expiry')
+              status, _ = api(SIGN, request, token)
+              if status != 403:
+                  raise ValueError('expired OpenBao token still usable')
+              return {'same_previously_accepted_credentials': True, 'oidc_login_http': 400,
+                      'oidc_expiry_error_confirmed': True, 'openbao_sign_http': 403,
+                      'not_before_epoch': deadline, 'checked_at_epoch': clock(),
+                      'wait_elapsed_seconds': elapsed() - start, 'health_http': 200}
+
+
+          def prove(api, request_oidc, public_key, raw_public, run_id, attempt,
+                    check_certificate=certificate_info, check_expiry=expiration_proof):
               jwt = request_oidc(AUDIENCE)
               claims = decoded_claims(jwt, run_id, attempt)
               status, response = api('auth/jwt/login', {'role': 'rehearsal-issuer-protected', 'jwt': jwt})
-              jwt = None
               if status != 200:
                   raise ValueError('protected OIDC login refused')
               auth = response['auth']
               if auth['policies'] != [POLICY] or auth['renewable'] is not False or not 0 < auth['lease_duration'] <= 300:
                   raise ValueError('unexpected token authority or lifetime')
               token = auth['client_token']
+              token_expiry_bound = time.time() + auth['lease_duration']
               response = auth = None
               key_id = f'gate0:1397614140:{run_id}:{attempt}'
               req = {'public_key': public_key, 'key_id': key_id, 'valid_principals': 'dotmac-gate0-controller',
@@ -237,12 +273,14 @@ jobs:
                   if status not in (400, 403):
                       raise ValueError('forbidden certificate request accepted')
                   negative[label] = status
-              token = None  # Batch token is nonrenewable, expires within300s; cannot self-revoke.
+              expiry = check_expiry(api, jwt, token, req, claims['exp'], token_expiry_bound)
+              token = jwt = None  # RAM-only credentials retained until measured expiry, then discarded.
               return {'proof': 'A8-live-OIDC-partial', 'protected_login_passed': True,
                   'github_claims_verified_by_openbao_login': claims, 'certificate': cert, 'negative_http': negative,
                   'protected_reads_http': 403, 'renew_self_http': 403, 'batch_token_max_ttl_seconds': 300,
                   'batch_token_individual_revocation_supported': False,
-                  'remaining_real_claim_and_expiry_matrix': 'pending', 'issuance_refused': True}
+                  'expiry': expiry, 'remaining_real_claim_and_expiry_matrix': 'identity-claim matrix pending',
+                  'issuance_refused': True}
 
 
           def main():
