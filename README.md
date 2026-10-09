@@ -96,3 +96,31 @@ This is explicitly a **partial A8 proof**, not acceptance: other real-token clai
 mismatches remain pending the agreed live matrix. The final step still
 exits1 and issues no authorization. The existing source-policy baseline remains
 mutable within this repository and is not independent runner-admission evidence.
+
+## Proposed Environment-claim witnesses
+
+Two additional GitHub-hosted jobs in the same dispatch produce genuine OIDC
+witnesses: one without an Environment and one using
+`rehearsal-issuer-negative-witness`. Neither selects the protected runner group,
+checks out code, receives an OpenBao endpoint, or exchanges a token with OpenBao.
+Both retain the main/dispatch guard and only `id-token: write` permission.
+
+The dispatch input is a fresh disposable verifier's RSA3072 **public** key.
+Each producer wraps its JWT using RSA-OAEP-SHA256 and AES-256-GCM, binding the
+ciphertext to recipient, case, source revision, run and attempt. GitHub job
+outputs transport ciphertext, which may remain in GitHub run metadata. The
+private recipient key stays on the disposable verifier and is destroyed with it.
+No plaintext JWT is written to a job output, log or artifact.
+
+The protected job privately decrypts each witness, verifies its RS256 signature
+against GitHub's HTTPS JWKS, checks its source/run identity and all six other
+bound claims, and requires at least sixty seconds of remaining validity. Only
+then does it request OpenBao login. A 400 response must specifically identify the
+missing or mismatched Environment claim; generic rejection cannot pass. The
+allowlisted public result contains no bearer or raw server error.
+
+Run `node --test tests/environment_witness.test.js` alongside the Python suite.
+These tests use generated fixture keys and mocked HTTP, and do not establish a
+live refusal. Exact-head review, the separate test Environment and a fresh
+qualified disposable verifier are required before execution. Non-Environment
+claim negatives, CP acceptance and Gate-0 readiness remain outstanding.

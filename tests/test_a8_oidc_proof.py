@@ -24,7 +24,7 @@ class ProofTests(unittest.TestCase):
    return base(path,data,token)
   def pause(seconds):clock[0]+=seconds
   def expiry(*args):return p.expiration_proof(*args,clock=lambda:clock[0],pause=pause,elapsed=lambda:clock[0])
-  return p.prove(phased,request or fixture,'public',b'raw','123','1',lambda c,k,r:{'key_id':k,'measured_lifetime_seconds':600},expiry)
+  return p.prove(phased,request or fixture,'public',b'raw','123','1',lambda c,k,r:{'key_id':k,'measured_lifetime_seconds':600},expiry,lambda *args:{'fixture_environment_witnesses':True})
  def test_executed_workflow_embeds_exact_tested_script(self):
   from pathlib import Path
   root=Path(__file__).resolve().parents[1]
@@ -36,7 +36,7 @@ class ProofTests(unittest.TestCase):
  def test_output_excludes_bearers_and_is_partial(self):
   r=self.run_proof();s=json.dumps(r)
   self.assertNotIn('PRIVATE_FIXTURE_BEARER',s);self.assertNotIn('fixture-signature',s)
-  self.assertEqual(r['remaining_real_claim_and_expiry_matrix'],'identity-claim matrix pending');self.assertTrue(r['issuance_refused'])
+  self.assertEqual(r['remaining_real_claim_and_expiry_matrix'],'non-environment identity-claim matrix pending');self.assertTrue(r['issuance_refused'])
   self.assertEqual(r['expiry']['oidc_login_http'],400);self.assertEqual(r['expiry']['openbao_sign_http'],403)
  def test_wrong_claim_expiry_or_run_never_reaches_login(self):
   for change in [*({k:'wrong'} for k in p.CLAIMS),{'exp':int(time.time())-1},{'run_id':'456'},{'run_attempt':'2'}]:
@@ -69,7 +69,7 @@ class ExpiryTests(unittest.TestCase):
    error=urllib.error.HTTPError('https://fixture.invalid',400,'fixture',{},io.BytesIO(json.dumps({'errors':[message]}).encode()))
    with patch.dict(os.environ,{'A8_BAO_ADDR':'http://'+address+':8200'}),patch.object(p.subprocess,'run',return_value=subprocess.CompletedProcess([],0,b'[{"dev":"wg0"}]')),patch.object(p.OPENER,'open',side_effect=error):
     status,result=p.bao_client()('auth/jwt/login',{'jwt':'PRIVATE_JWT'})
-   self.assertEqual(status,400);self.assertEqual(result,{'expiry_error':expected})
+   self.assertEqual(status,400);self.assertEqual(result,{'expiry_error':expected,'environment_error':None})
    self.assertNotIn('PRIVATE',json.dumps(result))
  def run_expiry(self,bad=None,jwt_exp=1200):
   clock=[1000.0];calls=[]
@@ -123,5 +123,33 @@ class CertificateTests(unittest.TestCase):
     with self.assertRaises(ValueError):p.certificate_info(cert,key_id,b'wrong-key')
     wire=bytearray(base64.b64decode(cert.split()[1]));wire[-1]^=1
     with self.assertRaises(ValueError):p.certificate_info(cert.split()[0]+' '+base64.b64encode(wire).decode(),key_id,raw)
+
+
+class EnvironmentWitnessTests(unittest.TestCase):
+ def call(self,bad=None):
+  import os,subprocess
+  from unittest.mock import patch
+  def consume(args,**kwargs):
+   kind=kwargs['env']['A8_WITNESS_CASE'];claims=dict(p.CLAIMS,run_id='123',run_attempt='1');claims['environment']=None if kind=='missing_environment' else 'rehearsal-issuer-negative-witness'
+   if bad=='other-claim':claims['ref']='wrong'
+   if bad=='run':claims['run_id']='456'
+   return subprocess.CompletedProcess(args,0,json.dumps({'jwt':'PRIVATE_NEGATIVE_'+kind,'claims':claims,'case':kind}).encode())
+  def api(path,data):
+   self.assertTrue(data['jwt'].startswith('PRIVATE_NEGATIVE_'))
+   return (200,{}) if bad=='success' else (400,{'environment_error':None if bad=='reason' else ('missing' if data['jwt'].endswith('missing_environment') else 'mismatch')})
+  with patch.dict(os.environ,{'A8_WITNESS_MISSING_ENVIRONMENT':'ciphertext','A8_WITNESS_WRONG_ENVIRONMENT':'ciphertext','A8_WITNESS_SCRIPT':'public-helper'}),patch.object(p.subprocess,'run',side_effect=consume):return p.environment_witnesses(api,'123','1')
+ def test_both_specific_refusals_and_no_bearer_output(self):
+  result=self.call();self.assertEqual(set(result),{'missing_environment','wrong_environment'});self.assertNotIn('PRIVATE_NEGATIVE_',json.dumps(result))
+ def test_generic_error_success_or_other_identity_change_cannot_pass(self):
+  for bad in ('other-claim','run','success','reason'):
+   with self.subTest(bad=bad),self.assertRaises(ValueError):self.call(bad)
+ def test_environment_error_body_classification_is_specific(self):
+  import io,ipaddress,os,subprocess,urllib.error
+  from unittest.mock import patch
+  addr=str(ipaddress.ip_network('100.64.0.0/10').network_address+1)
+  for reason,text in [('missing','claim "environment" is missing'),('mismatch','claim "environment" does not match any associated bound claim values'),(None,'claim "ref" is missing')]:
+   error=urllib.error.HTTPError('https://fixture.invalid',400,'fixture',{},io.BytesIO(json.dumps({'errors':['error validating claims: '+text]}).encode()))
+   with patch.dict(os.environ,{'A8_BAO_ADDR':'http://'+addr+':8200'}),patch.object(p.subprocess,'run',return_value=subprocess.CompletedProcess([],0,b'[{"dev":"wg0"}]')),patch.object(p.OPENER,'open',side_effect=error):status,result=p.bao_client()('auth/jwt/login',{})
+   self.assertEqual(status,400);self.assertEqual(result['environment_error'],reason)
 
 if __name__=='__main__':unittest.main()

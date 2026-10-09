@@ -1,0 +1,123 @@
+'use strict';
+// Ciphertext is public. consume stdout is a PRIVATE pipe captured by Python only.
+const C = require('node:crypto');
+const F = require('node:fs');
+const AUD = 'urn:dotmac:gate0:rehearsal-issuer';
+const ISS = 'https://token.actions.githubusercontent.com';
+const WRONG_ENV = 'rehearsal-issuer-negative-witness';
+function requireValue(ok) { if (!ok) throw new Error('witness validation failed'); }
+function binding(env, kind) {
+  requireValue(['missing_environment','wrong_environment'].includes(kind));
+  requireValue(env.GITHUB_REPOSITORY === 'dotmac-tech/gate0-issuer-execution');
+  requireValue(env.GITHUB_REPOSITORY_ID === '1397614140' && env.GITHUB_REPOSITORY_OWNER_ID === '335992433');
+  requireValue(env.GITHUB_REF === 'refs/heads/main' && env.GITHUB_EVENT_NAME === 'workflow_dispatch');
+  requireValue(env.GITHUB_WORKFLOW_REF === env.GITHUB_REPOSITORY + '/.github/workflows/gate0-issuer.yml@refs/heads/main');
+  requireValue(/^\d+$/.test(env.GITHUB_RUN_ID) && /^\d+$/.test(env.GITHUB_RUN_ATTEMPT));
+  requireValue(/^[a-f0-9]{40}$/.test(env.GITHUB_SHA));
+  return {case:kind, repository_id:env.GITHUB_REPOSITORY_ID, owner_id:env.GITHUB_REPOSITORY_OWNER_ID,
+    run_id:env.GITHUB_RUN_ID, run_attempt:env.GITHUB_RUN_ATTEMPT, workflow_ref:env.GITHUB_WORKFLOW_REF,
+    ref:env.GITHUB_REF, event_name:env.GITHUB_EVENT_NAME, source_sha:env.GITHUB_SHA};
+}
+function publicKey(key) {
+  const result = C.createPublicKey(key);
+  requireValue(result.asymmetricKeyType === 'rsa' && result.asymmetricKeyDetails.modulusLength === 3072);
+  return result;
+}
+function fingerprint(key) { return C.createHash('sha256').update(key.export({type:'spki',format:'der'})).digest('hex'); }
+function b64(value, maximum) {
+  requireValue(typeof value === 'string' && value.length <= maximum && /^[A-Za-z0-9_-]+$/.test(value));
+  const raw = Buffer.from(value,'base64url'); requireValue(raw.toString('base64url') === value); return raw;
+}
+function aad(header) { return Buffer.from(JSON.stringify(header)); }
+function seal(jwt, key, bound) {
+  requireValue(typeof jwt === 'string' && Buffer.byteLength(jwt) <= 8192);
+  const pub=publicKey(key), secret=C.randomBytes(32), nonce=C.randomBytes(12);
+  const header={v:1,binding:bound,recipient:fingerprint(pub)};
+  const cipher=C.createCipheriv('aes-256-gcm',secret,nonce); cipher.setAAD(aad(header));
+  const ciphertext=Buffer.concat([cipher.update(jwt,'utf8'),cipher.final()]);
+  const wrapped=C.publicEncrypt({key:pub,padding:C.constants.RSA_PKCS1_OAEP_PADDING,oaepHash:'sha256'},secret);
+  secret.fill(0);
+  return Buffer.from(JSON.stringify({...header,wrapped:wrapped.toString('base64url'),nonce:nonce.toString('base64url'),
+    ciphertext:ciphertext.toString('base64url'),tag:cipher.getAuthTag().toString('base64url')})).toString('base64url');
+}
+function open(envelope, privateKey, bound) {
+  const value=JSON.parse(b64(envelope,20000).toString('utf8'));
+  requireValue(Object.keys(value).sort().join(',') === 'binding,ciphertext,nonce,recipient,tag,v,wrapped');
+  requireValue(value.v === 1 && JSON.stringify(value.binding) === JSON.stringify(bound));
+  const pub=publicKey(privateKey); requireValue(value.recipient === fingerprint(pub));
+  const secret=C.privateDecrypt({key:privateKey,padding:C.constants.RSA_PKCS1_OAEP_PADDING,oaepHash:'sha256'},b64(value.wrapped,1024));
+  requireValue(secret.length === 32);
+  const nonce=b64(value.nonce,32), tag=b64(value.tag,32);requireValue(nonce.length===12 && tag.length===16);
+  const decipher=C.createDecipheriv('aes-256-gcm',secret,nonce);decipher.setAAD(aad({v:1,binding:value.binding,recipient:value.recipient}));decipher.setAuthTag(tag);
+  try { return Buffer.concat([decipher.update(b64(value.ciphertext,12000)),decipher.final()]).toString('utf8'); }
+  finally { secret.fill(0); }
+}
+function decode(jwt) {
+  requireValue(typeof jwt === 'string' && Buffer.byteLength(jwt)<=8192);
+  const parts=jwt.split('.');requireValue(parts.length===3);
+  return {parts, header:JSON.parse(b64(parts[0],2048)), claims:JSON.parse(b64(parts[1],10000))};
+}
+function validateClaims(jwt, env, kind, now=Date.now()/1000) {
+  const {header,claims}=decode(jwt);const bound=binding(env,kind);
+  requireValue(header.alg==='RS256' && typeof header.kid==='string' && header.kid.length<=256);
+  const wanted={repository:env.GITHUB_REPOSITORY,repository_id:bound.repository_id,repository_owner_id:bound.owner_id,
+    ref:bound.ref,workflow_ref:bound.workflow_ref,event_name:bound.event_name,iss:ISS,aud:AUD,
+    run_id:bound.run_id,run_attempt:bound.run_attempt,workflow_sha:bound.source_sha,runner_environment:'github-hosted'};
+  for (const [key,value] of Object.entries(wanted)) requireValue(claims[key]===value);
+  if (kind==='missing_environment') {
+    requireValue(!Object.hasOwn(claims,'environment'));
+    requireValue(claims.sub==='repo:'+env.GITHUB_REPOSITORY+':ref:refs/heads/main');
+  } else {
+    requireValue(claims.environment===WRONG_ENV);
+    requireValue(claims.sub==='repo:'+env.GITHUB_REPOSITORY+':environment:'+WRONG_ENV);
+  }
+  requireValue(Number.isInteger(claims.exp) && claims.exp-now>=60 && claims.exp-now<=600);
+  requireValue(Number.isInteger(claims.iat) && claims.iat<=now && claims.iat>=now-600);
+  requireValue(Number.isInteger(claims.nbf) && claims.nbf<=now);
+  return {header,claims,bound};
+}
+function verify(jwt, env, kind, jwks, now=Date.now()/1000) {
+  const result=validateClaims(jwt,env,kind,now), parts=jwt.split('.');
+  requireValue(Array.isArray(jwks.keys) && jwks.keys.length<=32);
+  const keys=jwks.keys.filter(k=>k.kid===result.header.kid && k.kty==='RSA' && (!k.alg || k.alg==='RS256') && (!k.use || k.use==='sig'));
+  requireValue(keys.length===1);
+  const key=C.createPublicKey({key:keys[0],format:'jwk'});requireValue(key.asymmetricKeyDetails.modulusLength>=2048);
+  requireValue(C.verify('RSA-SHA256',Buffer.from(parts[0]+'.'+parts[1]),key,b64(parts[2],2048)));
+  const claims={};for(const name of ['repository','repository_id','repository_owner_id','ref','workflow_ref','event_name','iss','aud','exp','run_id','run_attempt','workflow_sha'])claims[name]=result.claims[name];
+  claims.environment=Object.hasOwn(result.claims,'environment')?result.claims.environment:null;
+  return claims;
+}
+async function fetchJSON(url, headers={}) {
+  const response=await fetch(url,{headers,redirect:'error',signal:AbortSignal.timeout(15000)});
+  requireValue(response.ok);
+  const reader=response.body.getReader();const chunks=[];let size=0;
+  while(true) { const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>65536){await reader.cancel();throw new Error('bounded response exceeded');}chunks.push(Buffer.from(value)); }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+async function main(env=process.env) {
+  const kind=env.A8_WITNESS_CASE, bound=binding(env,kind);
+  if(env.A8_WITNESS_MODE==='produce') {
+    const pub=publicKey(env.A8_WITNESS_PUBLIC_KEY);
+    const url=new URL(env.ACTIONS_ID_TOKEN_REQUEST_URL);
+    requireValue(url.protocol==='https:' && !url.username && !url.password && (!url.port || url.port==='443') && url.hostname.endsWith('.actions.githubusercontent.com'));
+    requireValue(typeof env.ACTIONS_ID_TOKEN_REQUEST_TOKEN==='string' && env.ACTIONS_ID_TOKEN_REQUEST_TOKEN.length>0);
+    url.searchParams.set('audience',AUD);
+    const result=await fetchJSON(url,{Authorization:'Bearer '+env.ACTIONS_ID_TOKEN_REQUEST_TOKEN});
+    validateClaims(result.value,env,kind);
+    const encrypted=seal(result.value,pub.export({type:'spki',format:'pem'}),bound);
+    F.appendFileSync(env.GITHUB_OUTPUT,'envelope='+encrypted+'\n',{encoding:'utf8'});
+    process.stdout.write(JSON.stringify({case:kind,status:'encrypted',recipient:fingerprint(pub)})+'\n');
+  } else {
+    requireValue(env.A8_WITNESS_MODE==='consume');
+    const stat=F.statSync(env.A8_WITNESS_PRIVATE_KEY_FILE);requireValue(stat.isFile() && (stat.mode & 0o077)===0 && stat.size<=8192);
+    const privateKey=C.createPrivateKey(F.readFileSync(env.A8_WITNESS_PRIVATE_KEY_FILE));
+    const jwt=open(env.A8_WITNESS_ENVELOPE,privateKey,bound);
+    const discovery=await fetchJSON(ISS+'/.well-known/openid-configuration');
+    const url=new URL(discovery.jwks_uri);requireValue(discovery.issuer===ISS && url.origin===ISS && !url.username && !url.password);
+    const claims=verify(jwt,env,kind,await fetchJSON(url));
+    // This stdout is captured only by the approved Python parent, never a shell step.
+    process.stdout.write(JSON.stringify({jwt,claims,case:kind}));
+  }
+}
+module.exports={binding,seal,open,validateClaims,verify,main,fetchJSON,WRONG_ENV};
+if(require.main===module || process.argv[1]==='-')main().catch(()=>{process.stdout.write('{"witness_status":"failed"}\n');process.exitCode=1;});
