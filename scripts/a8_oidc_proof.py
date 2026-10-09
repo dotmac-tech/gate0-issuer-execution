@@ -164,6 +164,7 @@ def bao_client():
                 errors = []
             environment_error = None
             workflow_error = None
+            event_error = None
             if isinstance(errors, list):
                 for message in errors:
                     if not isinstance(message, str):
@@ -174,8 +175,10 @@ def bao_client():
                         environment_error = 'mismatch'
                     if message.endswith('claim "workflow_ref" does not match any associated bound claim values'):
                         workflow_error = 'mismatch'
+                    if message.endswith('claim "event_name" does not match any associated bound claim values'):
+                        event_error = 'mismatch'
             return error.code, {'expiry_error': expired, 'environment_error': environment_error,
-                                'workflow_error': workflow_error}
+                                'workflow_error': workflow_error, 'event_error': event_error}
     return api
 
 
@@ -247,33 +250,45 @@ def environment_witnesses(api, run_id, attempt):
 
 
 def workflow_witness(api, run_id, attempt):
+    kind = os.environ.get('A8_WORKFLOW_WITNESS_CASE', 'wrong_workflow')
+    if kind not in ('wrong_workflow', 'wrong_event'):
+        raise ValueError('unsupported witness case')
+    event = 'repository_dispatch' if kind == 'wrong_event' else 'workflow_dispatch'
     producer_run = os.environ['A8_WORKFLOW_WITNESS_RUN_ID']
     producer_attempt = os.environ['A8_WORKFLOW_WITNESS_RUN_ATTEMPT']
     if not producer_run.isdecimal() or not producer_attempt.isdecimal() or producer_run == run_id:
         raise ValueError('invalid independent producer coordinates')
     expected_workflow = 'dotmac-tech/gate0-issuer-execution/.github/workflows/gate0-negative-witness.yml@refs/heads/main'
-    env = dict(os.environ, A8_WITNESS_MODE='consume', A8_WITNESS_CASE='wrong_workflow',
+    env = dict(os.environ, A8_WITNESS_MODE='consume', A8_WITNESS_CASE=kind,
                A8_WITNESS_ENVELOPE=os.environ['A8_WORKFLOW_WITNESS'],
-               GITHUB_WORKFLOW_REF=expected_workflow, GITHUB_RUN_ID=producer_run,
+               GITHUB_WORKFLOW_REF=expected_workflow, GITHUB_EVENT_NAME=event, GITHUB_RUN_ID=producer_run,
                GITHUB_RUN_ATTEMPT=producer_attempt)
     private = subprocess.run(['node', os.environ['A8_WITNESS_SCRIPT']], env=env,
                              capture_output=True, check=True, timeout=50)
     witness = json.loads(private.stdout)
     private = None
     claims = witness['claims']
-    if witness['case'] != 'wrong_workflow' or claims['run_id'] != producer_run or claims['run_attempt'] != producer_attempt:
+    if witness['case'] != kind or claims['run_id'] != producer_run or claims['run_attempt'] != producer_attempt:
         raise ValueError('wrong independent producer coordinates')
     if claims.get('workflow_ref') != expected_workflow or claims.get('workflow_sha') != os.environ['GITHUB_SHA']:
         raise ValueError('wrong producer workflow revision')
+    differences = ['event_name', 'workflow_ref'] if kind == 'wrong_event' else ['workflow_ref']
+    if claims.get('event_name') != event:
+        raise ValueError('wrong producer event')
     for key, value in CLAIMS.items():
-        if key != 'workflow_ref' and claims.get(key) != value:
+        if key not in differences and claims.get(key) != value:
             raise ValueError('more than one bound identity claim differs')
     status, response = api('auth/jwt/login', {'role': 'rehearsal-issuer-protected', 'jwt': witness['jwt']})
     witness = None
-    if status != 400 or response.get('workflow_error') != 'mismatch':
-        raise ValueError('workflow witness not specifically refused')
-    return {'login_http': status, 'reason': 'workflow_ref_mismatch', 'signature_verified': True,
-            'other_six_bound_claims_match': True, 'claims': claims,
+    rejected = [name for name, field in [('event_name', 'event_error'), ('workflow_ref', 'workflow_error')]
+                if name in differences and response.get(field) == 'mismatch']
+    if status != 400 or not rejected:
+        raise ValueError('identity witness not specifically refused')
+    return {'login_http': status, 'reason': rejected[0] + '_mismatch', 'signature_verified': True,
+            'changed_bound_claims': differences, 'rejection_claims': rejected,
+            'individual_event_claim_isolated': False if kind == 'wrong_event' else None,
+            'other_six_bound_claims_match': kind == 'wrong_workflow',
+            'remaining_bound_claims_match': True, 'claims': claims,
             'consumer_run_id': run_id, 'consumer_run_attempt': attempt,
             'coordinate_binding': 'producer signature/recipient/source checked; launcher must independently attest GitHub API run binding'}
 
