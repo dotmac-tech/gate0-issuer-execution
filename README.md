@@ -165,3 +165,23 @@ never rerun with an old key/envelope. Any stale witness or unexpected successful
 login fails the proof; observe all issued-token expiry before teardown. Existing
 Environment, audience, scoped-capability and expiry tests and final refusal remain.
 Other ref/event/repository/owner witnesses and CP/Gate-0 acceptance remain pending.
+
+## Proposed coupled non-dispatch witness
+
+The hosted negative producer additionally handles only repository_dispatch type
+`a8-negative-event-proof` on main, under the existing protected Environment review.
+Its client payload contains only the fresh verifier's RSA3072 PUBLIC key. Values
+enter shell steps through environment variables, never interpolated shell code.
+No OpenBao exchange/endpoint, checkout/action or protected runner access is added.
+The primary workflow stays workflow_dispatch/main-only; select `wrong_event` only
+with independently API-qualified ciphertext from that reviewed producer revision.
+
+The genuine token differs in BOTH event_name and workflow_ref. Public evidence
+lists both and the specific bound claim named by OpenBao's refusal. It does not
+claim an independent event test or CP acceptance. Wrong-workflow-only dispatch
+remains available. Signature/source/API run/attempt/recipient/freshness checks and
+actual JWT/batch expiry, scoped refusals and final connector refusal remain.
+Never reuse a recipient or envelope. Source changes require exact-head review,
+then a fresh disposable proof and both normal Environment reviews. No live event
+proof, policy change, residual acceptance or Gate0 allocation is implied by tests.
+GitHub event semantics: https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#repository_dispatch

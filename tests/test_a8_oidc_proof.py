@@ -69,7 +69,7 @@ class ExpiryTests(unittest.TestCase):
    error=urllib.error.HTTPError('https://fixture.invalid',400,'fixture',{},io.BytesIO(json.dumps({'errors':[message]}).encode()))
    with patch.dict(os.environ,{'A8_BAO_ADDR':'http://'+address+':8200'}),patch.object(p.subprocess,'run',return_value=subprocess.CompletedProcess([],0,b'[{"dev":"wg0"}]')),patch.object(p.OPENER,'open',side_effect=error):
     status,result=p.bao_client()('auth/jwt/login',{'jwt':'PRIVATE_JWT'})
-   self.assertEqual(status,400);self.assertEqual(result,{'expiry_error':expected,'environment_error':None,'workflow_error':None})
+   self.assertEqual(status,400);self.assertEqual(result,{'expiry_error':expected,'environment_error':None,'workflow_error':None,'event_error':None})
    self.assertNotIn('PRIVATE',json.dumps(result))
  def run_expiry(self,bad=None,jwt_exp=1200):
   clock=[1000.0];calls=[]
@@ -180,5 +180,38 @@ class WorkflowWitnessTests(unittest.TestCase):
    error=urllib.error.HTTPError('https://fixture.invalid',400,'fixture',{},io.BytesIO(json.dumps({'errors':['error validating claims: '+text]}).encode()))
    with patch.dict(os.environ,{'A8_BAO_ADDR':'http://100.64.0.1:8200'}),patch.object(p.subprocess,'run',return_value=subprocess.CompletedProcess([],0,b'[{"dev":"wg0"}]')),patch.object(p.OPENER,'open',side_effect=error):status,result=p.bao_client()('auth/jwt/login',{})
    self.assertEqual(status,400);self.assertEqual(result['workflow_error'],reason)
+
+class EventWitnessTests(unittest.TestCase):
+ def call(self,bad=None):
+  import os,subprocess
+  from unittest.mock import patch
+  wf='dotmac-tech/gate0-issuer-execution/.github/workflows/gate0-negative-witness.yml@refs/heads/main'
+  def consume(args,**kwargs):
+   self.assertEqual(kwargs['env']['GITHUB_EVENT_NAME'],'repository_dispatch')
+   self.assertEqual(kwargs['env']['A8_WITNESS_CASE'],'wrong_event')
+   claims=dict(p.CLAIMS,workflow_ref=wf,event_name='repository_dispatch',workflow_sha='a'*40,run_id='456',run_attempt='1')
+   if bad=='other-claim':claims['environment']='wrong'
+   if bad=='event':claims['event_name']='workflow_dispatch'
+   if bad=='source':claims['workflow_sha']='b'*40
+   return subprocess.CompletedProcess(args,0,json.dumps({'jwt':'PRIVATE_EVENT_FIXTURE','claims':claims,'case':'wrong_event'}).encode())
+  def api(path,data):
+   self.assertEqual(data['jwt'],'PRIVATE_EVENT_FIXTURE')
+   return (200,{}) if bad=='success' else (400,{'event_error':'mismatch' if bad!='reason' else None})
+  with patch.dict(os.environ,{'A8_WORKFLOW_WITNESS_CASE':'wrong_event','A8_WORKFLOW_WITNESS_RUN_ID':'456','A8_WORKFLOW_WITNESS_RUN_ATTEMPT':'1','A8_WORKFLOW_WITNESS':'ciphertext','A8_WITNESS_SCRIPT':'public-helper','GITHUB_SHA':'a'*40}),patch.object(p.subprocess,'run',side_effect=consume):return p.workflow_witness(api,'123','1')
+ def test_coupled_result_never_claims_individual_event_coverage(self):
+  result=self.call();self.assertEqual(result['changed_bound_claims'],['event_name','workflow_ref'])
+  self.assertFalse(result['individual_event_claim_isolated']);self.assertFalse(result['other_six_bound_claims_match'])
+  self.assertTrue(result['remaining_bound_claims_match']);self.assertEqual(result['reason'],'event_name_mismatch')
+  self.assertNotIn('PRIVATE_EVENT_FIXTURE',json.dumps(result))
+ def test_other_claim_generic_denial_or_success_fails(self):
+  for bad in ('other-claim','event','source','reason','success'):
+   with self.subTest(bad=bad),self.assertRaises(ValueError):self.call(bad)
+ def test_error_classification_requires_exact_event_claim(self):
+  import io,os,subprocess,urllib.error
+  from unittest.mock import patch
+  for message,expected in [('claim "event_name" does not match any associated bound claim values','mismatch'),('claim "ref" does not match any associated bound claim values',None),('claim "event_name" is missing',None)]:
+   error=urllib.error.HTTPError('https://fixture.invalid',400,'fixture',{},io.BytesIO(json.dumps({'errors':['error validating claims: '+message]}).encode()))
+   with patch.dict(os.environ,{'A8_BAO_ADDR':'http://100.64.0.1:8200'}),patch.object(p.subprocess,'run',return_value=subprocess.CompletedProcess([],0,b'[{"dev":"wg0"}]')),patch.object(p.OPENER,'open',side_effect=error):status,result=p.bao_client()('auth/jwt/login',{})
+   self.assertEqual(status,400);self.assertEqual(result['event_error'],expected)
 
 if __name__=='__main__':unittest.main()

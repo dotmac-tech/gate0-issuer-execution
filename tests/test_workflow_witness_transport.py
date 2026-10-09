@@ -16,7 +16,7 @@ class TransportTests(unittest.TestCase):
   self.record['envelope']=base64.urlsafe_b64encode(json.dumps(self.envelope).encode()).rstrip(b'=').decode()
   return 'workflow_witness\tstep\t2026-10-09T10:00:15Z '+json.dumps(self.record,separators=(',',':'))+'\n'
  def call(self,**kwargs):
-  return t.qualify(self.run,self.jobs,kwargs.get('log',self.log()),self.sha,self.recipient,'2026-10-09T10:00:00Z',now=kwargs.get('now',datetime(2026,10,9,10,0,30,tzinfo=timezone.utc)))
+  return t.qualify(self.run,self.jobs,kwargs.get('log',self.log()),self.sha,self.recipient,'2026-10-09T10:00:00Z',now=kwargs.get('now',datetime(2026,10,9,10,0,30,tzinfo=timezone.utc)),kind=kwargs.get('kind','wrong_workflow'))
  def test_qualified_api_run_returns_public_transport_and_attestation(self):
   inputs,record=self.call();self.assertEqual(inputs['workflow_witness_run_id'],'456');self.assertTrue(record['api_run_job_binding_checked']);self.assertTrue(record['not_cp_admission_evidence'])
  def test_wrong_source_event_ref_run_attempt_or_time_fails(self):
@@ -47,5 +47,25 @@ class TransportTests(unittest.TestCase):
    with self.assertRaises(ValueError):self.call(log=bad)
   self.record['private_extra']='refuse'
   with self.assertRaises(ValueError):self.call()
+
+class EventTransportTests(TransportTests):
+ def setUp(self):
+  super().setUp()
+ def event_fixture(self):
+  self.run['event']='repository_dispatch'
+  self.record['case']='wrong_event'
+  self.envelope['binding'].update(case='wrong_event',event_name='repository_dispatch')
+ def test_event_transport_keeps_case_and_api_event_binding(self):
+  self.event_fixture();inputs,record=self.call(kind='wrong_event')
+  self.assertEqual(inputs['workflow_witness_case'],'wrong_event')
+  self.assertEqual(record['producer_event'],'repository_dispatch')
+  with self.assertRaises(ValueError):self.call()
+ def test_event_substitution_case_replay_and_unknown_case_fail(self):
+  for change in ('api_event','encrypted_event','case','unknown'):
+   self.setUp();self.event_fixture()
+   if change=='api_event':self.run['event']='workflow_dispatch'
+   if change=='encrypted_event':self.envelope['binding']['event_name']='workflow_dispatch'
+   if change=='case':self.record['case']='wrong_workflow'
+   with self.subTest(change=change),self.assertRaises(ValueError):self.call(kind='unknown' if change=='unknown' else 'wrong_event')
 
 if __name__=='__main__':unittest.main()

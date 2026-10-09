@@ -18,15 +18,17 @@ def require(condition):
         raise ValueError('producer transport qualification failed')
 
 
-def qualify(run, jobs, log, revision, recipient, dispatched_at, now=None):
+def qualify(run, jobs, log, revision, recipient, dispatched_at, now=None, kind='wrong_workflow'):
     """Return ciphertext dispatch inputs only after exact-source/API qualification."""
     now = datetime.now(timezone.utc) if now is None else now
+    require(kind in ('wrong_workflow', 'wrong_event'))
+    event = 'repository_dispatch' if kind == 'wrong_event' else 'workflow_dispatch'
     require(re.fullmatch(r'[a-f0-9]{40}', revision) is not None)
     require(re.fullmatch(r'[a-f0-9]{64}', recipient) is not None)
     require(run['repository']['id'] == 1397614140 and run['repository']['full_name'] == REPOSITORY)
     require(run['repository']['owner']['id'] == 335992433)
     require(run['status'] == 'completed' and run['conclusion'] == 'success')
-    require(run['event'] == 'workflow_dispatch' and run['head_branch'] == 'main' and run['head_sha'] == revision)
+    require(run['event'] == event and run['head_branch'] == 'main' and run['head_sha'] == revision)
     require(run['path'] in (FILE, FILE + '@refs/heads/main'))
     created = datetime.fromisoformat(run['created_at'].replace('Z', '+00:00'))
     dispatched = datetime.fromisoformat(dispatched_at.replace('Z', '+00:00'))
@@ -40,7 +42,7 @@ def qualify(run, jobs, log, revision, recipient, dispatched_at, now=None):
     require(len(log.encode()) <= 2*1024*1024)
     records = []
     for line in log.splitlines():
-        marker = line.find('{"case":"wrong_workflow"')
+        marker = line.find('{"case":"' + kind + '"')
         if marker < 0:
             continue
         value = json.loads(line[marker:])
@@ -48,6 +50,7 @@ def qualify(run, jobs, log, revision, recipient, dispatched_at, now=None):
         records.append(value)
     require(len(records) == 1)
     value = records[0]
+    require(value['case'] == kind)
     require(value['status'] == 'encrypted' and value['recipient'] == recipient and value['source_sha'] == revision)
     require(value['run_id'] == str(run['id']) and value['run_attempt'] == str(run['run_attempt']))
     encoded = value['envelope']
@@ -56,13 +59,13 @@ def qualify(run, jobs, log, revision, recipient, dispatched_at, now=None):
     require(base64.urlsafe_b64encode(raw).rstrip(b'=').decode() == encoded)
     envelope = json.loads(raw)
     require(set(envelope) == {'v','binding','recipient','wrapped','nonce','ciphertext','tag'})
-    expected = {'case':'wrong_workflow','repository_id':'1397614140','owner_id':'335992433',
+    expected = {'case':kind,'repository_id':'1397614140','owner_id':'335992433',
                 'run_id':str(run['id']),'run_attempt':str(run['run_attempt']), 'workflow_ref':WORKFLOW,
-                'ref':'refs/heads/main','event_name':'workflow_dispatch','source_sha':revision}
+                'ref':'refs/heads/main','event_name':event,'source_sha':revision}
     require(envelope['v'] == 1 and envelope['recipient'] == recipient and envelope['binding'] == expected)
-    return {'workflow_witness':encoded, 'workflow_witness_run_id':str(run['id']),
+    return {'workflow_witness_case':kind, 'workflow_witness':encoded, 'workflow_witness_run_id':str(run['id']),
             'workflow_witness_run_attempt':str(run['run_attempt'])}, {
                 'producer_run_id':run['id'],'producer_run_attempt':run['run_attempt'],
                 'producer_job_id':job['id'],'producer_source_sha':revision,
                 'recipient_sha256':recipient,'api_run_job_binding_checked':True,
-                'ciphertext_only':True,'not_cp_admission_evidence':True}
+                'witness_case':kind,'producer_event':event,'ciphertext_only':True,'not_cp_admission_evidence':True}

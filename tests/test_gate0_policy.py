@@ -27,7 +27,7 @@ class Gate0PolicyTests(unittest.TestCase):
     def test_privileged_workflow_bytes_remain_at_admitted_digest(self) -> None:
         self.assertEqual(
             sha256(EXPECTED_WORKFLOWS["gate0-issuer.yml"].encode("utf-8")).hexdigest(),
-            "db726bb1550c4a490bddf1eb8c8e8eb376c03dfc16efad2101c0f80d9ae4ef1e",
+            "1058789d5519f62ef0b880549372f980049a8ebd7b29d8978e4a340aa975dc5c",
         )
 
     def test_privileged_boundary_mutations_fail(self) -> None:
@@ -72,7 +72,9 @@ class Gate0PolicyTests(unittest.TestCase):
                          ("rehearsal-issuer-protected", "unprotected"),
                          ("id-token: write", "contents: write"),
                          ("github.ref == 'refs/heads/main'", "true"),
-                         ("timeout-minutes: 3", "timeout-minutes: 60")):
+                         ("timeout-minutes: 3", "timeout-minutes: 60"),
+                         ("types: [a8-negative-event-proof]", "types: [anything]"),
+                         ("github.event.action == 'a8-negative-event-proof'", "true")):
             with self.subTest(old=old):
                 self.assertIn(old, original)
                 path.write_text(original.replace(old, new, 1))
