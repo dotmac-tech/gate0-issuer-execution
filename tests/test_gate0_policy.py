@@ -27,7 +27,7 @@ class Gate0PolicyTests(unittest.TestCase):
     def test_privileged_workflow_bytes_remain_at_admitted_digest(self) -> None:
         self.assertEqual(
             sha256(EXPECTED_WORKFLOWS["gate0-issuer.yml"].encode("utf-8")).hexdigest(),
-            "331a4ddd2b0e5fa0951766a72d57472fd4734b0d47a808d80e83dab3b1fe0a8f",
+            "7caec0e460597e64b67d4bd795bd01f5e39e449980aeaaa52a7675642dc414d6",
         )
 
     def test_privileged_boundary_mutations_fail(self) -> None:
@@ -52,6 +52,16 @@ class Gate0PolicyTests(unittest.TestCase):
                 path.write_text(original.replace(old, new, 1), encoding="utf-8")
                 self.assertTrue(policy_errors(self.root))
         path.write_text(original, encoding="utf-8")
+
+    def test_all_witness_embeddings_match_tested_source(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github/workflows/gate0-issuer.yml").read_text()
+        import re
+        bodies = re.findall(r"<<'A8_ENV_WITNESS_JS'\n(.*?)          A8_ENV_WITNESS_JS\n", workflow, re.S)
+        self.assertEqual(len(bodies), 3)
+        expected = (root / "scripts/environment_witness.js").read_text()
+        for body in bodies:
+            self.assertEqual("".join(line[10:] if line.strip() else "\n" for line in body.splitlines(keepends=True)), expected)
 
     def test_extra_workflow_cannot_select_protected_group(self) -> None:
         (self.workflows / "pr.yml").write_text(
