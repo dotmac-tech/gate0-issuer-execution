@@ -53,3 +53,30 @@ the unchanged issuer workflow SHA-256
 the live negative probe evidence and cancellation, and a fresh runner/group
 online read-back. Only then proceed to the protected dispatch with Michael's
 Environment review. This source change alone is not Gate-0 closure.
+
+## A8 live proof amendment (pending admission)
+
+The protected job now contains a bounded OIDC capability proof before its final
+refusal. The group, Environment, main/dispatch guards and permission remain
+pinned; no checkout or third-party action executes in that job. The tested Python
+source is embedded verbatim, and CI checks that equality and the workflow digest.
+
+This needs an independently qualified disposable runner and private WireGuard
+route. The operator supplies `A8_BAO_ADDR` through the runner's local environment;
+no estate address or credential belongs in repository variables, source or logs.
+The proof requires the endpoint on the shared-address tunnel range, port8200,
+with a route through wg0 and no proxy. It does not install a CA on any target,
+connect to targets, read a signer or issue a rehearsal lease.
+
+It requests a real GitHub token for the adopted audience, checks only the
+allowlisted identity/run claims, and uses OpenBao login to verify authenticity.
+It checks a real wrong-audience login, signing limits, private-data denials and
+renewal refusal. Only public claims, certificate fields and HTTP results appear
+in output. Bearer credentials stay in memory. The resulting batch token cannot
+be individually revoked; it expires within300s. Runner teardown must wait for
+that expiry and prove the group empty afterward.
+
+This is explicitly a **partial A8 proof**, not acceptance: other real-token claim
+mismatches and expiry remain pending the agreed live matrix. The final step still
+exits1 and issues no authorization. The existing source-policy baseline remains
+mutable within this repository and is not independent runner-admission evidence.
