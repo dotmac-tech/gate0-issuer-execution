@@ -1,4 +1,4 @@
-"""Detect drift from the two provisional workflow source files.
+"""Detect drift from the three provisional workflow source files.
 
 The exact allowlist is mutable in this same repository as the checked files.
 It catches accidental drift, not a malicious PR changing both the baseline
@@ -17,6 +17,18 @@ on:
     inputs:
       witness_public_key:
         description: Ephemeral verifier RSA3072 public key (never a private key)
+        required: true
+        type: string
+      workflow_witness:
+        description: Encrypted wrong-workflow witness (ciphertext only)
+        required: true
+        type: string
+      workflow_witness_run_id:
+        description: Producer run ID independently checked through GitHub API
+        required: true
+        type: string
+      workflow_witness_run_attempt:
+        description: Producer attempt independently checked through GitHub API
         required: true
         type: string
 
@@ -53,11 +65,12 @@ jobs:
           const WRONG_ENV = 'rehearsal-issuer-negative-witness';
           function requireValue(ok, code='validation') { if (!ok) { const error=new Error('witness validation failed');error.code=code;throw error; } }
           function binding(env, kind) {
-            requireValue(['missing_environment','wrong_environment'].includes(kind));
+            requireValue(['missing_environment','wrong_environment','wrong_workflow'].includes(kind));
             requireValue(env.GITHUB_REPOSITORY === 'dotmac-tech/gate0-issuer-execution');
             requireValue(env.GITHUB_REPOSITORY_ID === '1397614140' && env.GITHUB_REPOSITORY_OWNER_ID === '335992433');
             requireValue(env.GITHUB_REF === 'refs/heads/main' && env.GITHUB_EVENT_NAME === 'workflow_dispatch');
-            requireValue(env.GITHUB_WORKFLOW_REF === env.GITHUB_REPOSITORY + '/.github/workflows/gate0-issuer.yml@refs/heads/main');
+            const filename=kind==='wrong_workflow'?'gate0-negative-witness.yml':'gate0-issuer.yml';
+            requireValue(env.GITHUB_WORKFLOW_REF === env.GITHUB_REPOSITORY + '/.github/workflows/'+filename+'@refs/heads/main');
             requireValue(/^\d+$/.test(env.GITHUB_RUN_ID) && /^\d+$/.test(env.GITHUB_RUN_ATTEMPT));
             requireValue(/^[a-f0-9]{40}$/.test(env.GITHUB_SHA));
             return {case:kind, repository_id:env.GITHUB_REPOSITORY_ID, owner_id:env.GITHUB_REPOSITORY_OWNER_ID,
@@ -114,8 +127,9 @@ jobs:
               requireValue(!Object.hasOwn(claims,'environment'));
               requireValue(claims.sub===SUBJECT_PREFIX+':ref:refs/heads/main', 'subject');
             } else {
-              requireValue(claims.environment===WRONG_ENV);
-              requireValue(claims.sub===SUBJECT_PREFIX+':environment:'+WRONG_ENV, 'subject');
+              const environment=kind==='wrong_workflow'?'rehearsal-issuer-protected':WRONG_ENV;
+              requireValue(claims.environment===environment);
+              requireValue(claims.sub===SUBJECT_PREFIX+':environment:'+environment, 'subject');
             }
             requireValue(Number.isInteger(claims.exp) && claims.exp-now>=60 && claims.exp-now<=600);
             requireValue(Number.isInteger(claims.iat) && claims.iat<=now && claims.iat>=now-600);
@@ -158,7 +172,10 @@ jobs:
               const encrypted=seal(result.value,pub.export({type:'spki',format:'pem'}),bound);
               phase='ciphertext_output';
               F.appendFileSync(env.GITHUB_OUTPUT,'envelope='+encrypted+'\n',{encoding:'utf8'});
-              process.stdout.write(JSON.stringify({case:kind,status:'encrypted',recipient:fingerprint(pub)})+'\n');
+              const record={case:kind,status:'encrypted',recipient:fingerprint(pub)};
+              // Cross-run transport publishes CIPHERTEXT only; the recipient key never leaves the verifier.
+              if(kind==='wrong_workflow')Object.assign(record,{envelope:encrypted,run_id:bound.run_id,run_attempt:bound.run_attempt,source_sha:bound.source_sha});
+              process.stdout.write(JSON.stringify(record)+'\n');
             } else {
               requireValue(env.A8_WITNESS_MODE==='consume');
               phase='private_decryption';
@@ -207,11 +224,12 @@ jobs:
           const WRONG_ENV = 'rehearsal-issuer-negative-witness';
           function requireValue(ok, code='validation') { if (!ok) { const error=new Error('witness validation failed');error.code=code;throw error; } }
           function binding(env, kind) {
-            requireValue(['missing_environment','wrong_environment'].includes(kind));
+            requireValue(['missing_environment','wrong_environment','wrong_workflow'].includes(kind));
             requireValue(env.GITHUB_REPOSITORY === 'dotmac-tech/gate0-issuer-execution');
             requireValue(env.GITHUB_REPOSITORY_ID === '1397614140' && env.GITHUB_REPOSITORY_OWNER_ID === '335992433');
             requireValue(env.GITHUB_REF === 'refs/heads/main' && env.GITHUB_EVENT_NAME === 'workflow_dispatch');
-            requireValue(env.GITHUB_WORKFLOW_REF === env.GITHUB_REPOSITORY + '/.github/workflows/gate0-issuer.yml@refs/heads/main');
+            const filename=kind==='wrong_workflow'?'gate0-negative-witness.yml':'gate0-issuer.yml';
+            requireValue(env.GITHUB_WORKFLOW_REF === env.GITHUB_REPOSITORY + '/.github/workflows/'+filename+'@refs/heads/main');
             requireValue(/^\d+$/.test(env.GITHUB_RUN_ID) && /^\d+$/.test(env.GITHUB_RUN_ATTEMPT));
             requireValue(/^[a-f0-9]{40}$/.test(env.GITHUB_SHA));
             return {case:kind, repository_id:env.GITHUB_REPOSITORY_ID, owner_id:env.GITHUB_REPOSITORY_OWNER_ID,
@@ -268,8 +286,9 @@ jobs:
               requireValue(!Object.hasOwn(claims,'environment'));
               requireValue(claims.sub===SUBJECT_PREFIX+':ref:refs/heads/main', 'subject');
             } else {
-              requireValue(claims.environment===WRONG_ENV);
-              requireValue(claims.sub===SUBJECT_PREFIX+':environment:'+WRONG_ENV, 'subject');
+              const environment=kind==='wrong_workflow'?'rehearsal-issuer-protected':WRONG_ENV;
+              requireValue(claims.environment===environment);
+              requireValue(claims.sub===SUBJECT_PREFIX+':environment:'+environment, 'subject');
             }
             requireValue(Number.isInteger(claims.exp) && claims.exp-now>=60 && claims.exp-now<=600);
             requireValue(Number.isInteger(claims.iat) && claims.iat<=now && claims.iat>=now-600);
@@ -312,7 +331,10 @@ jobs:
               const encrypted=seal(result.value,pub.export({type:'spki',format:'pem'}),bound);
               phase='ciphertext_output';
               F.appendFileSync(env.GITHUB_OUTPUT,'envelope='+encrypted+'\n',{encoding:'utf8'});
-              process.stdout.write(JSON.stringify({case:kind,status:'encrypted',recipient:fingerprint(pub)})+'\n');
+              const record={case:kind,status:'encrypted',recipient:fingerprint(pub)};
+              // Cross-run transport publishes CIPHERTEXT only; the recipient key never leaves the verifier.
+              if(kind==='wrong_workflow')Object.assign(record,{envelope:encrypted,run_id:bound.run_id,run_attempt:bound.run_attempt,source_sha:bound.source_sha});
+              process.stdout.write(JSON.stringify(record)+'\n');
             } else {
               requireValue(env.A8_WITNESS_MODE==='consume');
               phase='private_decryption';
@@ -342,6 +364,9 @@ jobs:
     steps:
       - name: Prove protected OIDC and scoped SSH capability
         env:
+          A8_WORKFLOW_WITNESS: ${{ inputs.workflow_witness }}
+          A8_WORKFLOW_WITNESS_RUN_ID: ${{ inputs.workflow_witness_run_id }}
+          A8_WORKFLOW_WITNESS_RUN_ATTEMPT: ${{ inputs.workflow_witness_run_attempt }}
           A8_WITNESS_MISSING_ENVIRONMENT: ${{ needs.witness_missing_environment.outputs.envelope }}
           A8_WITNESS_WRONG_ENVIRONMENT: ${{ needs.witness_wrong_environment.outputs.envelope }}
         shell: bash
@@ -359,11 +384,12 @@ jobs:
           const WRONG_ENV = 'rehearsal-issuer-negative-witness';
           function requireValue(ok, code='validation') { if (!ok) { const error=new Error('witness validation failed');error.code=code;throw error; } }
           function binding(env, kind) {
-            requireValue(['missing_environment','wrong_environment'].includes(kind));
+            requireValue(['missing_environment','wrong_environment','wrong_workflow'].includes(kind));
             requireValue(env.GITHUB_REPOSITORY === 'dotmac-tech/gate0-issuer-execution');
             requireValue(env.GITHUB_REPOSITORY_ID === '1397614140' && env.GITHUB_REPOSITORY_OWNER_ID === '335992433');
             requireValue(env.GITHUB_REF === 'refs/heads/main' && env.GITHUB_EVENT_NAME === 'workflow_dispatch');
-            requireValue(env.GITHUB_WORKFLOW_REF === env.GITHUB_REPOSITORY + '/.github/workflows/gate0-issuer.yml@refs/heads/main');
+            const filename=kind==='wrong_workflow'?'gate0-negative-witness.yml':'gate0-issuer.yml';
+            requireValue(env.GITHUB_WORKFLOW_REF === env.GITHUB_REPOSITORY + '/.github/workflows/'+filename+'@refs/heads/main');
             requireValue(/^\d+$/.test(env.GITHUB_RUN_ID) && /^\d+$/.test(env.GITHUB_RUN_ATTEMPT));
             requireValue(/^[a-f0-9]{40}$/.test(env.GITHUB_SHA));
             return {case:kind, repository_id:env.GITHUB_REPOSITORY_ID, owner_id:env.GITHUB_REPOSITORY_OWNER_ID,
@@ -420,8 +446,9 @@ jobs:
               requireValue(!Object.hasOwn(claims,'environment'));
               requireValue(claims.sub===SUBJECT_PREFIX+':ref:refs/heads/main', 'subject');
             } else {
-              requireValue(claims.environment===WRONG_ENV);
-              requireValue(claims.sub===SUBJECT_PREFIX+':environment:'+WRONG_ENV, 'subject');
+              const environment=kind==='wrong_workflow'?'rehearsal-issuer-protected':WRONG_ENV;
+              requireValue(claims.environment===environment);
+              requireValue(claims.sub===SUBJECT_PREFIX+':environment:'+environment, 'subject');
             }
             requireValue(Number.isInteger(claims.exp) && claims.exp-now>=60 && claims.exp-now<=600);
             requireValue(Number.isInteger(claims.iat) && claims.iat<=now && claims.iat>=now-600);
@@ -464,7 +491,10 @@ jobs:
               const encrypted=seal(result.value,pub.export({type:'spki',format:'pem'}),bound);
               phase='ciphertext_output';
               F.appendFileSync(env.GITHUB_OUTPUT,'envelope='+encrypted+'\n',{encoding:'utf8'});
-              process.stdout.write(JSON.stringify({case:kind,status:'encrypted',recipient:fingerprint(pub)})+'\n');
+              const record={case:kind,status:'encrypted',recipient:fingerprint(pub)};
+              // Cross-run transport publishes CIPHERTEXT only; the recipient key never leaves the verifier.
+              if(kind==='wrong_workflow')Object.assign(record,{envelope:encrypted,run_id:bound.run_id,run_attempt:bound.run_attempt,source_sha:bound.source_sha});
+              process.stdout.write(JSON.stringify(record)+'\n');
             } else {
               requireValue(env.A8_WITNESS_MODE==='consume');
               phase='private_decryption';
@@ -649,6 +679,7 @@ jobs:
                           expired = False
                           errors = []
                       environment_error = None
+                      workflow_error = None
                       if isinstance(errors, list):
                           for message in errors:
                               if not isinstance(message, str):
@@ -657,7 +688,10 @@ jobs:
                                   environment_error = 'missing'
                               if message.endswith('claim "environment" does not match any associated bound claim values'):
                                   environment_error = 'mismatch'
-                      return error.code, {'expiry_error': expired, 'environment_error': environment_error}
+                              if message.endswith('claim "workflow_ref" does not match any associated bound claim values'):
+                                  workflow_error = 'mismatch'
+                      return error.code, {'expiry_error': expired, 'environment_error': environment_error,
+                                          'workflow_error': workflow_error}
               return api
 
 
@@ -727,9 +761,42 @@ jobs:
               return results
 
 
+
+          def workflow_witness(api, run_id, attempt):
+              producer_run = os.environ['A8_WORKFLOW_WITNESS_RUN_ID']
+              producer_attempt = os.environ['A8_WORKFLOW_WITNESS_RUN_ATTEMPT']
+              if not producer_run.isdecimal() or not producer_attempt.isdecimal() or producer_run == run_id:
+                  raise ValueError('invalid independent producer coordinates')
+              expected_workflow = 'dotmac-tech/gate0-issuer-execution/.github/workflows/gate0-negative-witness.yml@refs/heads/main'
+              env = dict(os.environ, A8_WITNESS_MODE='consume', A8_WITNESS_CASE='wrong_workflow',
+                         A8_WITNESS_ENVELOPE=os.environ['A8_WORKFLOW_WITNESS'],
+                         GITHUB_WORKFLOW_REF=expected_workflow, GITHUB_RUN_ID=producer_run,
+                         GITHUB_RUN_ATTEMPT=producer_attempt)
+              private = subprocess.run(['node', os.environ['A8_WITNESS_SCRIPT']], env=env,
+                                       capture_output=True, check=True, timeout=50)
+              witness = json.loads(private.stdout)
+              private = None
+              claims = witness['claims']
+              if witness['case'] != 'wrong_workflow' or claims['run_id'] != producer_run or claims['run_attempt'] != producer_attempt:
+                  raise ValueError('wrong independent producer coordinates')
+              if claims.get('workflow_ref') != expected_workflow or claims.get('workflow_sha') != os.environ['GITHUB_SHA']:
+                  raise ValueError('wrong producer workflow revision')
+              for key, value in CLAIMS.items():
+                  if key != 'workflow_ref' and claims.get(key) != value:
+                      raise ValueError('more than one bound identity claim differs')
+              status, response = api('auth/jwt/login', {'role': 'rehearsal-issuer-protected', 'jwt': witness['jwt']})
+              witness = None
+              if status != 400 or response.get('workflow_error') != 'mismatch':
+                  raise ValueError('workflow witness not specifically refused')
+              return {'login_http': status, 'reason': 'workflow_ref_mismatch', 'signature_verified': True,
+                      'other_six_bound_claims_match': True, 'claims': claims,
+                      'consumer_run_id': run_id, 'consumer_run_attempt': attempt,
+                      'coordinate_binding': 'producer signature/recipient/source checked; launcher must independently attest GitHub API run binding'}
+
+
           def prove(api, request_oidc, public_key, raw_public, run_id, attempt,
                     check_certificate=certificate_info, check_expiry=expiration_proof,
-                    check_environments=environment_witnesses):
+                    check_environments=environment_witnesses, check_workflow=workflow_witness):
               jwt = request_oidc(AUDIENCE)
               claims = decoded_claims(jwt, run_id, attempt)
               status, response = api('auth/jwt/login', {'role': 'rehearsal-issuer-protected', 'jwt': jwt})
@@ -750,6 +817,7 @@ jobs:
               cert = check_certificate(response['data']['signed_key'], key_id, raw_public)
               response = None
               environments = check_environments(api, run_id, attempt)
+              workflow = check_workflow(api, run_id, attempt)
               negative = {}
               wrong = request_oidc(AUDIENCE + ':wrong-audience')
               status, response = api('auth/jwt/login', {'role': 'rehearsal-issuer-protected', 'jwt': wrong})
@@ -782,8 +850,8 @@ jobs:
                   'github_claims_verified_by_openbao_login': claims, 'certificate': cert, 'negative_http': negative,
                   'protected_reads_http': 403, 'renew_self_http': 403, 'batch_token_max_ttl_seconds': 300,
                   'batch_token_individual_revocation_supported': False,
-                  'expiry': expiry, 'environment_witnesses': environments,
-                  'remaining_real_claim_and_expiry_matrix': 'non-environment identity-claim matrix pending',
+                  'expiry': expiry, 'environment_witnesses': environments, 'workflow_witness': workflow,
+                  'remaining_real_claim_and_expiry_matrix': 'remaining ref/event/repository/owner identity matrix pending',
                   'issuance_refused': True}
 
 
@@ -836,6 +904,176 @@ jobs:
         run: |
           python3 -B -m unittest discover -s tests -v
           node --test tests/environment_witness.test.js
+''',
+    'gate0-negative-witness.yml': r'''name: A8 encrypted wrong-workflow witness (hosted only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      witness_public_key:
+        description: Fresh disposable verifier RSA3072 PUBLIC key
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  workflow_witness:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment: rehearsal-issuer-protected
+    timeout-minutes: 3
+    permissions:
+      id-token: write
+    steps:
+      - name: Encrypt real wrong-workflow token for the disposable verifier
+        env:
+          A8_WITNESS_MODE: produce
+          A8_WITNESS_CASE: wrong_workflow
+          A8_WITNESS_PUBLIC_KEY: ${{ inputs.witness_public_key }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'A8_ENV_WITNESS_JS'
+          'use strict';
+          // Ciphertext is public. consume stdout is a PRIVATE pipe captured by Python only.
+          const C = require('node:crypto');
+          const F = require('node:fs');
+          const AUD = 'urn:dotmac:gate0:rehearsal-issuer';
+          const ISS = 'https://token.actions.githubusercontent.com';
+          const SUBJECT_PREFIX = 'repo:dotmac-tech@335992433/gate0-issuer-execution@1397614140';
+          let phase='initial';
+          const WRONG_ENV = 'rehearsal-issuer-negative-witness';
+          function requireValue(ok, code='validation') { if (!ok) { const error=new Error('witness validation failed');error.code=code;throw error; } }
+          function binding(env, kind) {
+            requireValue(['missing_environment','wrong_environment','wrong_workflow'].includes(kind));
+            requireValue(env.GITHUB_REPOSITORY === 'dotmac-tech/gate0-issuer-execution');
+            requireValue(env.GITHUB_REPOSITORY_ID === '1397614140' && env.GITHUB_REPOSITORY_OWNER_ID === '335992433');
+            requireValue(env.GITHUB_REF === 'refs/heads/main' && env.GITHUB_EVENT_NAME === 'workflow_dispatch');
+            const filename=kind==='wrong_workflow'?'gate0-negative-witness.yml':'gate0-issuer.yml';
+            requireValue(env.GITHUB_WORKFLOW_REF === env.GITHUB_REPOSITORY + '/.github/workflows/'+filename+'@refs/heads/main');
+            requireValue(/^\d+$/.test(env.GITHUB_RUN_ID) && /^\d+$/.test(env.GITHUB_RUN_ATTEMPT));
+            requireValue(/^[a-f0-9]{40}$/.test(env.GITHUB_SHA));
+            return {case:kind, repository_id:env.GITHUB_REPOSITORY_ID, owner_id:env.GITHUB_REPOSITORY_OWNER_ID,
+              run_id:env.GITHUB_RUN_ID, run_attempt:env.GITHUB_RUN_ATTEMPT, workflow_ref:env.GITHUB_WORKFLOW_REF,
+              ref:env.GITHUB_REF, event_name:env.GITHUB_EVENT_NAME, source_sha:env.GITHUB_SHA};
+          }
+          function publicKey(key) {
+            const result = C.createPublicKey(key);
+            requireValue(result.asymmetricKeyType === 'rsa' && result.asymmetricKeyDetails.modulusLength === 3072);
+            return result;
+          }
+          function fingerprint(key) { return C.createHash('sha256').update(key.export({type:'spki',format:'der'})).digest('hex'); }
+          function b64(value, maximum) {
+            requireValue(typeof value === 'string' && value.length <= maximum && /^[A-Za-z0-9_-]+$/.test(value));
+            const raw = Buffer.from(value,'base64url'); requireValue(raw.toString('base64url') === value); return raw;
+          }
+          function aad(header) { return Buffer.from(JSON.stringify(header)); }
+          function seal(jwt, key, bound) {
+            requireValue(typeof jwt === 'string' && Buffer.byteLength(jwt) <= 8192);
+            const pub=publicKey(key), secret=C.randomBytes(32), nonce=C.randomBytes(12);
+            const header={v:1,binding:bound,recipient:fingerprint(pub)};
+            const cipher=C.createCipheriv('aes-256-gcm',secret,nonce); cipher.setAAD(aad(header));
+            const ciphertext=Buffer.concat([cipher.update(jwt,'utf8'),cipher.final()]);
+            const wrapped=C.publicEncrypt({key:pub,padding:C.constants.RSA_PKCS1_OAEP_PADDING,oaepHash:'sha256'},secret);
+            secret.fill(0);
+            return Buffer.from(JSON.stringify({...header,wrapped:wrapped.toString('base64url'),nonce:nonce.toString('base64url'),
+              ciphertext:ciphertext.toString('base64url'),tag:cipher.getAuthTag().toString('base64url')})).toString('base64url');
+          }
+          function open(envelope, privateKey, bound) {
+            const value=JSON.parse(b64(envelope,20000).toString('utf8'));
+            requireValue(Object.keys(value).sort().join(',') === 'binding,ciphertext,nonce,recipient,tag,v,wrapped');
+            requireValue(value.v === 1 && JSON.stringify(value.binding) === JSON.stringify(bound));
+            const pub=publicKey(privateKey); requireValue(value.recipient === fingerprint(pub));
+            const secret=C.privateDecrypt({key:privateKey,padding:C.constants.RSA_PKCS1_OAEP_PADDING,oaepHash:'sha256'},b64(value.wrapped,1024));
+            requireValue(secret.length === 32);
+            const nonce=b64(value.nonce,32), tag=b64(value.tag,32);requireValue(nonce.length===12 && tag.length===16);
+            const decipher=C.createDecipheriv('aes-256-gcm',secret,nonce);decipher.setAAD(aad({v:1,binding:value.binding,recipient:value.recipient}));decipher.setAuthTag(tag);
+            try { return Buffer.concat([decipher.update(b64(value.ciphertext,12000)),decipher.final()]).toString('utf8'); }
+            finally { secret.fill(0); }
+          }
+          function decode(jwt) {
+            requireValue(typeof jwt === 'string' && Buffer.byteLength(jwt)<=8192);
+            const parts=jwt.split('.');requireValue(parts.length===3);
+            return {parts, header:JSON.parse(b64(parts[0],2048)), claims:JSON.parse(b64(parts[1],10000))};
+          }
+          function validateClaims(jwt, env, kind, now=Date.now()/1000) {
+            const {header,claims}=decode(jwt);const bound=binding(env,kind);
+            requireValue(header.alg==='RS256' && typeof header.kid==='string' && header.kid.length<=256);
+            const wanted={repository:env.GITHUB_REPOSITORY,repository_id:bound.repository_id,repository_owner_id:bound.owner_id,
+              ref:bound.ref,workflow_ref:bound.workflow_ref,event_name:bound.event_name,iss:ISS,aud:AUD,
+              run_id:bound.run_id,run_attempt:bound.run_attempt,workflow_sha:bound.source_sha,runner_environment:'github-hosted'};
+            for (const [key,value] of Object.entries(wanted)) requireValue(claims[key]===value);
+            if (kind==='missing_environment') {
+              requireValue(!Object.hasOwn(claims,'environment'));
+              requireValue(claims.sub===SUBJECT_PREFIX+':ref:refs/heads/main', 'subject');
+            } else {
+              const environment=kind==='wrong_workflow'?'rehearsal-issuer-protected':WRONG_ENV;
+              requireValue(claims.environment===environment);
+              requireValue(claims.sub===SUBJECT_PREFIX+':environment:'+environment, 'subject');
+            }
+            requireValue(Number.isInteger(claims.exp) && claims.exp-now>=60 && claims.exp-now<=600);
+            requireValue(Number.isInteger(claims.iat) && claims.iat<=now && claims.iat>=now-600);
+            requireValue(Number.isInteger(claims.nbf) && claims.nbf<=now);
+            return {header,claims,bound};
+          }
+          function verify(jwt, env, kind, jwks, now=Date.now()/1000) {
+            const result=validateClaims(jwt,env,kind,now), parts=jwt.split('.');
+            requireValue(Array.isArray(jwks.keys) && jwks.keys.length<=32);
+            const keys=jwks.keys.filter(k=>k.kid===result.header.kid && k.kty==='RSA' && (!k.alg || k.alg==='RS256') && (!k.use || k.use==='sig'));
+            requireValue(keys.length===1);
+            const key=C.createPublicKey({key:keys[0],format:'jwk'});requireValue(key.asymmetricKeyDetails.modulusLength>=2048);
+            requireValue(C.verify('RSA-SHA256',Buffer.from(parts[0]+'.'+parts[1]),key,b64(parts[2],2048)));
+            const claims={};for(const name of ['repository','repository_id','repository_owner_id','ref','workflow_ref','event_name','iss','aud','exp','run_id','run_attempt','workflow_sha'])claims[name]=result.claims[name];
+            claims.environment=Object.hasOwn(result.claims,'environment')?result.claims.environment:null;
+            return claims;
+          }
+          async function fetchJSON(url, headers={}) {
+            const response=await fetch(url,{headers,redirect:'error',signal:AbortSignal.timeout(15000)});
+            requireValue(response.ok);
+            const reader=response.body.getReader();const chunks=[];let size=0;
+            while(true) { const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>65536){await reader.cancel();throw new Error('bounded response exceeded');}chunks.push(Buffer.from(value)); }
+            return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          }
+          async function main(env=process.env) {
+            phase='binding';
+            const kind=env.A8_WITNESS_CASE, bound=binding(env,kind);
+            if(env.A8_WITNESS_MODE==='produce') {
+              phase='recipient';
+              const pub=publicKey(env.A8_WITNESS_PUBLIC_KEY);
+              const url=new URL(env.ACTIONS_ID_TOKEN_REQUEST_URL);
+              requireValue(url.protocol==='https:' && !url.username && !url.password && (!url.port || url.port==='443') && url.hostname.endsWith('.actions.githubusercontent.com'));
+              requireValue(typeof env.ACTIONS_ID_TOKEN_REQUEST_TOKEN==='string' && env.ACTIONS_ID_TOKEN_REQUEST_TOKEN.length>0);
+              url.searchParams.set('audience',AUD);
+              phase='oidc_request';
+              const result=await fetchJSON(url,{Authorization:'Bearer '+env.ACTIONS_ID_TOKEN_REQUEST_TOKEN});
+              phase='claims';
+              validateClaims(result.value,env,kind);
+              phase='encryption';
+              const encrypted=seal(result.value,pub.export({type:'spki',format:'pem'}),bound);
+              phase='ciphertext_output';
+              F.appendFileSync(env.GITHUB_OUTPUT,'envelope='+encrypted+'\n',{encoding:'utf8'});
+              const record={case:kind,status:'encrypted',recipient:fingerprint(pub)};
+              // Cross-run transport publishes CIPHERTEXT only; the recipient key never leaves the verifier.
+              if(kind==='wrong_workflow')Object.assign(record,{envelope:encrypted,run_id:bound.run_id,run_attempt:bound.run_attempt,source_sha:bound.source_sha});
+              process.stdout.write(JSON.stringify(record)+'\n');
+            } else {
+              requireValue(env.A8_WITNESS_MODE==='consume');
+              phase='private_decryption';
+              const stat=F.statSync(env.A8_WITNESS_PRIVATE_KEY_FILE);requireValue(stat.isFile() && (stat.mode & 0o077)===0 && stat.size<=8192);
+              const privateKey=C.createPrivateKey(F.readFileSync(env.A8_WITNESS_PRIVATE_KEY_FILE));
+              const jwt=open(env.A8_WITNESS_ENVELOPE,privateKey,bound);
+              phase='github_signature';
+              const discovery=await fetchJSON(ISS+'/.well-known/openid-configuration');
+              const url=new URL(discovery.jwks_uri);requireValue(discovery.issuer===ISS && url.origin===ISS && !url.username && !url.password);
+              const claims=verify(jwt,env,kind,await fetchJSON(url));
+              // This stdout is captured only by the approved Python parent, never a shell step.
+              process.stdout.write(JSON.stringify({jwt,claims,case:kind}));
+            }
+          }
+          module.exports={binding,seal,open,validateClaims,verify,main,fetchJSON,WRONG_ENV};
+          if(require.main===module || process.argv[1]==='-')main().catch(error=>{process.stdout.write(JSON.stringify({witness_status:'failed',phase,reason:error.code==='subject'?'subject':'validation'})+'\n');process.exitCode=1;});
+          A8_ENV_WITNESS_JS
 ''',
 }
 

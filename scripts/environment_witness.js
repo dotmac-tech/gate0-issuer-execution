@@ -9,11 +9,12 @@ let phase='initial';
 const WRONG_ENV = 'rehearsal-issuer-negative-witness';
 function requireValue(ok, code='validation') { if (!ok) { const error=new Error('witness validation failed');error.code=code;throw error; } }
 function binding(env, kind) {
-  requireValue(['missing_environment','wrong_environment'].includes(kind));
+  requireValue(['missing_environment','wrong_environment','wrong_workflow'].includes(kind));
   requireValue(env.GITHUB_REPOSITORY === 'dotmac-tech/gate0-issuer-execution');
   requireValue(env.GITHUB_REPOSITORY_ID === '1397614140' && env.GITHUB_REPOSITORY_OWNER_ID === '335992433');
   requireValue(env.GITHUB_REF === 'refs/heads/main' && env.GITHUB_EVENT_NAME === 'workflow_dispatch');
-  requireValue(env.GITHUB_WORKFLOW_REF === env.GITHUB_REPOSITORY + '/.github/workflows/gate0-issuer.yml@refs/heads/main');
+  const filename=kind==='wrong_workflow'?'gate0-negative-witness.yml':'gate0-issuer.yml';
+  requireValue(env.GITHUB_WORKFLOW_REF === env.GITHUB_REPOSITORY + '/.github/workflows/'+filename+'@refs/heads/main');
   requireValue(/^\d+$/.test(env.GITHUB_RUN_ID) && /^\d+$/.test(env.GITHUB_RUN_ATTEMPT));
   requireValue(/^[a-f0-9]{40}$/.test(env.GITHUB_SHA));
   return {case:kind, repository_id:env.GITHUB_REPOSITORY_ID, owner_id:env.GITHUB_REPOSITORY_OWNER_ID,
@@ -70,8 +71,9 @@ function validateClaims(jwt, env, kind, now=Date.now()/1000) {
     requireValue(!Object.hasOwn(claims,'environment'));
     requireValue(claims.sub===SUBJECT_PREFIX+':ref:refs/heads/main', 'subject');
   } else {
-    requireValue(claims.environment===WRONG_ENV);
-    requireValue(claims.sub===SUBJECT_PREFIX+':environment:'+WRONG_ENV, 'subject');
+    const environment=kind==='wrong_workflow'?'rehearsal-issuer-protected':WRONG_ENV;
+    requireValue(claims.environment===environment);
+    requireValue(claims.sub===SUBJECT_PREFIX+':environment:'+environment, 'subject');
   }
   requireValue(Number.isInteger(claims.exp) && claims.exp-now>=60 && claims.exp-now<=600);
   requireValue(Number.isInteger(claims.iat) && claims.iat<=now && claims.iat>=now-600);
@@ -114,7 +116,10 @@ async function main(env=process.env) {
     const encrypted=seal(result.value,pub.export({type:'spki',format:'pem'}),bound);
     phase='ciphertext_output';
     F.appendFileSync(env.GITHUB_OUTPUT,'envelope='+encrypted+'\n',{encoding:'utf8'});
-    process.stdout.write(JSON.stringify({case:kind,status:'encrypted',recipient:fingerprint(pub)})+'\n');
+    const record={case:kind,status:'encrypted',recipient:fingerprint(pub)};
+    // Cross-run transport publishes CIPHERTEXT only; the recipient key never leaves the verifier.
+    if(kind==='wrong_workflow')Object.assign(record,{envelope:encrypted,run_id:bound.run_id,run_attempt:bound.run_attempt,source_sha:bound.source_sha});
+    process.stdout.write(JSON.stringify(record)+'\n');
   } else {
     requireValue(env.A8_WITNESS_MODE==='consume');
     phase='private_decryption';

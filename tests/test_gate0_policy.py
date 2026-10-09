@@ -27,7 +27,7 @@ class Gate0PolicyTests(unittest.TestCase):
     def test_privileged_workflow_bytes_remain_at_admitted_digest(self) -> None:
         self.assertEqual(
             sha256(EXPECTED_WORKFLOWS["gate0-issuer.yml"].encode("utf-8")).hexdigest(),
-            "cea3ddaab0b5963d23386028ae0ea23ddb3531c8d92ea37a3b45fb3a0b432197",
+            "db726bb1550c4a490bddf1eb8c8e8eb376c03dfc16efad2101c0f80d9ae4ef1e",
         )
 
     def test_privileged_boundary_mutations_fail(self) -> None:
@@ -57,11 +57,26 @@ class Gate0PolicyTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         workflow = (root / ".github/workflows/gate0-issuer.yml").read_text()
         import re
+        workflow += (root / '.github/workflows/gate0-negative-witness.yml').read_text()
         bodies = re.findall(r"<<'A8_ENV_WITNESS_JS'\n(.*?)          A8_ENV_WITNESS_JS\n", workflow, re.S)
-        self.assertEqual(len(bodies), 3)
+        self.assertEqual(len(bodies), 4)
         expected = (root / "scripts/environment_witness.js").read_text()
         for body in bodies:
             self.assertEqual("".join(line[10:] if line.strip() else "\n" for line in body.splitlines(keepends=True)), expected)
+
+    def test_negative_producer_boundary_mutations_fail(self) -> None:
+        path = self.workflows / "gate0-negative-witness.yml"
+        original = EXPECTED_WORKFLOWS[path.name]
+        for old, new in (("workflow_dispatch:", "pull_request_target:"),
+                         ("ubuntu-latest", "gate0-issuer-protected"),
+                         ("rehearsal-issuer-protected", "unprotected"),
+                         ("id-token: write", "contents: write"),
+                         ("github.ref == 'refs/heads/main'", "true"),
+                         ("timeout-minutes: 3", "timeout-minutes: 60")):
+            with self.subTest(old=old):
+                self.assertIn(old, original)
+                path.write_text(original.replace(old, new, 1))
+                self.assertTrue(policy_errors(self.root))
 
     def test_extra_workflow_cannot_select_protected_group(self) -> None:
         (self.workflows / "pr.yml").write_text(
