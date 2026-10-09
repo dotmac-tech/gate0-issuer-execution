@@ -124,3 +124,9 @@ These tests use generated fixture keys and mocked HTTP, and do not establish a
 live refusal. Exact-head review, the separate test Environment and a fresh
 qualified disposable verifier are required before execution. Non-Environment
 claim negatives, CP acceptance and Gate-0 readiness remain outstanding.
+
+The witness subject is pinned to GitHub's immutable prefix
+`repo:dotmac-tech@335992433/gate0-issuer-execution@1397614140`, matching the
+repository's live OIDC configuration. Legacy name-only subjects and substituted
+owner/repository IDs fail closed. Producer failures emit only a fixed phase and
+reason code, never token contents, response bodies or arbitrary error messages.
