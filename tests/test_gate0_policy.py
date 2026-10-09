@@ -27,7 +27,7 @@ class Gate0PolicyTests(unittest.TestCase):
     def test_privileged_workflow_bytes_remain_at_admitted_digest(self) -> None:
         self.assertEqual(
             sha256(EXPECTED_WORKFLOWS["gate0-issuer.yml"].encode("utf-8")).hexdigest(),
-            "2a62feee21d8236de28e21bb8850c4e0388a39f71cce4338b1c60e0741b876fd",
+            "052bbc537857c936f03cd9bfd0f8c76f954f598a9ff612ec666fb366bfe476c0",
         )
 
     def test_privileged_boundary_mutations_fail(self) -> None:
