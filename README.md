@@ -6,7 +6,7 @@ issuer decisions nor target execution authority.
 
 Current source is **provisional**. The `Gate-0 source drift check` runs on a
 GitHub-hosted runner for pull requests and pushes to `main`; it checks an exact
-allowlist of the two workflow files with Python's standard library. Run it
+allowlist of the three workflow files with Python's standard library. Run it
 locally with `python3 -B -m unittest discover -s tests -v`. The protected workflow
 is directly defined in `.github/workflows/gate0-issuer.yml`; its protected
 job schedules only for a manual dispatch from `main`. It requests only
@@ -130,3 +130,38 @@ The witness subject is pinned to GitHub's immutable prefix
 repository's live OIDC configuration. Legacy name-only subjects and substituted
 owner/repository IDs fail closed. Producer failures emit only a fixed phase and
 reason code, never token contents, response bodies or arbitrary error messages.
+
+## Proposed wrong-workflow witness
+
+`gate0-negative-witness.yml` adds a main/dispatch-only GitHub-hosted producer in
+the existing `rehearsal-issuer-protected` Environment. Its normal Environment
+review is retained. It has `id-token: write` only, no checkout/action, no protected
+runner selection, and no OpenBao endpoint or exchange code. Its token matches
+six bound claims and differs only in `workflow_ref`.
+
+The producer prints only a recipient-bound encrypted envelope plus public run,
+attempt, source revision and recipient fingerprint. Ciphertext may persist in
+GitHub logs and dispatch metadata. The fresh RSA3072 private key stays on the
+single-use disposable verifier and is destroyed with it. No plaintext JWT is
+published or copied through the operator's machine.
+
+Before dispatching the protected consumer, the operator must use live GitHub API
+read-backs and `scripts/workflow_witness_transport.py` to qualify the producer's
+repository/owner IDs, exact source, workflow file, event/ref, successful hosted
+job, run/attempt, fresh time window, recipient and ciphertext metadata. Pass only
+the resulting ciphertext and public producer coordinates as dispatch inputs.
+The consumer checks its own run separately, decrypts privately, verifies GitHub's
+signature and expiry, and requires all six other bound claims and the same source
+revision. OpenBao must return400 specifically for `workflow_ref` mismatch.
+
+The producer run is deliberately different from the consumer run. The source
+verifier binds the signed producer coordinates to the supplied expected values;
+the independent API lookup remains the launcher's obligation. This test helper
+is not CP's admission oracle. A green source check supplies no such attestation.
+
+Prepare/approve the exact source and the two normal Environment reviews before
+execution. Use a new recipient key and disposable verifier for each attempt;
+never rerun with an old key/envelope. Any stale witness or unexpected successful
+login fails the proof; observe all issued-token expiry before teardown. Existing
+Environment, audience, scoped-capability and expiry tests and final refusal remain.
+Other ref/event/repository/owner witnesses and CP/Gate-0 acceptance remain pending.

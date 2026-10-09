@@ -163,6 +163,7 @@ def bao_client():
                 expired = False
                 errors = []
             environment_error = None
+            workflow_error = None
             if isinstance(errors, list):
                 for message in errors:
                     if not isinstance(message, str):
@@ -171,7 +172,10 @@ def bao_client():
                         environment_error = 'missing'
                     if message.endswith('claim "environment" does not match any associated bound claim values'):
                         environment_error = 'mismatch'
-            return error.code, {'expiry_error': expired, 'environment_error': environment_error}
+                    if message.endswith('claim "workflow_ref" does not match any associated bound claim values'):
+                        workflow_error = 'mismatch'
+            return error.code, {'expiry_error': expired, 'environment_error': environment_error,
+                                'workflow_error': workflow_error}
     return api
 
 
@@ -241,9 +245,42 @@ def environment_witnesses(api, run_id, attempt):
     return results
 
 
+
+def workflow_witness(api, run_id, attempt):
+    producer_run = os.environ['A8_WORKFLOW_WITNESS_RUN_ID']
+    producer_attempt = os.environ['A8_WORKFLOW_WITNESS_RUN_ATTEMPT']
+    if not producer_run.isdecimal() or not producer_attempt.isdecimal() or producer_run == run_id:
+        raise ValueError('invalid independent producer coordinates')
+    expected_workflow = 'dotmac-tech/gate0-issuer-execution/.github/workflows/gate0-negative-witness.yml@refs/heads/main'
+    env = dict(os.environ, A8_WITNESS_MODE='consume', A8_WITNESS_CASE='wrong_workflow',
+               A8_WITNESS_ENVELOPE=os.environ['A8_WORKFLOW_WITNESS'],
+               GITHUB_WORKFLOW_REF=expected_workflow, GITHUB_RUN_ID=producer_run,
+               GITHUB_RUN_ATTEMPT=producer_attempt)
+    private = subprocess.run(['node', os.environ['A8_WITNESS_SCRIPT']], env=env,
+                             capture_output=True, check=True, timeout=50)
+    witness = json.loads(private.stdout)
+    private = None
+    claims = witness['claims']
+    if witness['case'] != 'wrong_workflow' or claims['run_id'] != producer_run or claims['run_attempt'] != producer_attempt:
+        raise ValueError('wrong independent producer coordinates')
+    if claims.get('workflow_ref') != expected_workflow or claims.get('workflow_sha') != os.environ['GITHUB_SHA']:
+        raise ValueError('wrong producer workflow revision')
+    for key, value in CLAIMS.items():
+        if key != 'workflow_ref' and claims.get(key) != value:
+            raise ValueError('more than one bound identity claim differs')
+    status, response = api('auth/jwt/login', {'role': 'rehearsal-issuer-protected', 'jwt': witness['jwt']})
+    witness = None
+    if status != 400 or response.get('workflow_error') != 'mismatch':
+        raise ValueError('workflow witness not specifically refused')
+    return {'login_http': status, 'reason': 'workflow_ref_mismatch', 'signature_verified': True,
+            'other_six_bound_claims_match': True, 'claims': claims,
+            'consumer_run_id': run_id, 'consumer_run_attempt': attempt,
+            'coordinate_binding': 'producer signature/recipient/source checked; launcher must independently attest GitHub API run binding'}
+
+
 def prove(api, request_oidc, public_key, raw_public, run_id, attempt,
           check_certificate=certificate_info, check_expiry=expiration_proof,
-          check_environments=environment_witnesses):
+          check_environments=environment_witnesses, check_workflow=workflow_witness):
     jwt = request_oidc(AUDIENCE)
     claims = decoded_claims(jwt, run_id, attempt)
     status, response = api('auth/jwt/login', {'role': 'rehearsal-issuer-protected', 'jwt': jwt})
@@ -264,6 +301,7 @@ def prove(api, request_oidc, public_key, raw_public, run_id, attempt,
     cert = check_certificate(response['data']['signed_key'], key_id, raw_public)
     response = None
     environments = check_environments(api, run_id, attempt)
+    workflow = check_workflow(api, run_id, attempt)
     negative = {}
     wrong = request_oidc(AUDIENCE + ':wrong-audience')
     status, response = api('auth/jwt/login', {'role': 'rehearsal-issuer-protected', 'jwt': wrong})
@@ -296,8 +334,8 @@ def prove(api, request_oidc, public_key, raw_public, run_id, attempt,
         'github_claims_verified_by_openbao_login': claims, 'certificate': cert, 'negative_http': negative,
         'protected_reads_http': 403, 'renew_self_http': 403, 'batch_token_max_ttl_seconds': 300,
         'batch_token_individual_revocation_supported': False,
-        'expiry': expiry, 'environment_witnesses': environments,
-        'remaining_real_claim_and_expiry_matrix': 'non-environment identity-claim matrix pending',
+        'expiry': expiry, 'environment_witnesses': environments, 'workflow_witness': workflow,
+        'remaining_real_claim_and_expiry_matrix': 'remaining ref/event/repository/owner identity matrix pending',
         'issuance_refused': True}
 
 
