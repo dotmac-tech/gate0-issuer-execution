@@ -4,8 +4,10 @@ const C = require('node:crypto');
 const F = require('node:fs');
 const AUD = 'urn:dotmac:gate0:rehearsal-issuer';
 const ISS = 'https://token.actions.githubusercontent.com';
+const SUBJECT_PREFIX = 'repo:dotmac-tech@335992433/gate0-issuer-execution@1397614140';
+let phase='initial';
 const WRONG_ENV = 'rehearsal-issuer-negative-witness';
-function requireValue(ok) { if (!ok) throw new Error('witness validation failed'); }
+function requireValue(ok, code='validation') { if (!ok) { const error=new Error('witness validation failed');error.code=code;throw error; } }
 function binding(env, kind) {
   requireValue(['missing_environment','wrong_environment'].includes(kind));
   requireValue(env.GITHUB_REPOSITORY === 'dotmac-tech/gate0-issuer-execution');
@@ -66,10 +68,10 @@ function validateClaims(jwt, env, kind, now=Date.now()/1000) {
   for (const [key,value] of Object.entries(wanted)) requireValue(claims[key]===value);
   if (kind==='missing_environment') {
     requireValue(!Object.hasOwn(claims,'environment'));
-    requireValue(claims.sub==='repo:'+env.GITHUB_REPOSITORY+':ref:refs/heads/main');
+    requireValue(claims.sub===SUBJECT_PREFIX+':ref:refs/heads/main', 'subject');
   } else {
     requireValue(claims.environment===WRONG_ENV);
-    requireValue(claims.sub==='repo:'+env.GITHUB_REPOSITORY+':environment:'+WRONG_ENV);
+    requireValue(claims.sub===SUBJECT_PREFIX+':environment:'+WRONG_ENV, 'subject');
   }
   requireValue(Number.isInteger(claims.exp) && claims.exp-now>=60 && claims.exp-now<=600);
   requireValue(Number.isInteger(claims.iat) && claims.iat<=now && claims.iat>=now-600);
@@ -95,23 +97,31 @@ async function fetchJSON(url, headers={}) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 async function main(env=process.env) {
+  phase='binding';
   const kind=env.A8_WITNESS_CASE, bound=binding(env,kind);
   if(env.A8_WITNESS_MODE==='produce') {
+    phase='recipient';
     const pub=publicKey(env.A8_WITNESS_PUBLIC_KEY);
     const url=new URL(env.ACTIONS_ID_TOKEN_REQUEST_URL);
     requireValue(url.protocol==='https:' && !url.username && !url.password && (!url.port || url.port==='443') && url.hostname.endsWith('.actions.githubusercontent.com'));
     requireValue(typeof env.ACTIONS_ID_TOKEN_REQUEST_TOKEN==='string' && env.ACTIONS_ID_TOKEN_REQUEST_TOKEN.length>0);
     url.searchParams.set('audience',AUD);
+    phase='oidc_request';
     const result=await fetchJSON(url,{Authorization:'Bearer '+env.ACTIONS_ID_TOKEN_REQUEST_TOKEN});
+    phase='claims';
     validateClaims(result.value,env,kind);
+    phase='encryption';
     const encrypted=seal(result.value,pub.export({type:'spki',format:'pem'}),bound);
+    phase='ciphertext_output';
     F.appendFileSync(env.GITHUB_OUTPUT,'envelope='+encrypted+'\n',{encoding:'utf8'});
     process.stdout.write(JSON.stringify({case:kind,status:'encrypted',recipient:fingerprint(pub)})+'\n');
   } else {
     requireValue(env.A8_WITNESS_MODE==='consume');
+    phase='private_decryption';
     const stat=F.statSync(env.A8_WITNESS_PRIVATE_KEY_FILE);requireValue(stat.isFile() && (stat.mode & 0o077)===0 && stat.size<=8192);
     const privateKey=C.createPrivateKey(F.readFileSync(env.A8_WITNESS_PRIVATE_KEY_FILE));
     const jwt=open(env.A8_WITNESS_ENVELOPE,privateKey,bound);
+    phase='github_signature';
     const discovery=await fetchJSON(ISS+'/.well-known/openid-configuration');
     const url=new URL(discovery.jwks_uri);requireValue(discovery.issuer===ISS && url.origin===ISS && !url.username && !url.password);
     const claims=verify(jwt,env,kind,await fetchJSON(url));
@@ -120,4 +130,4 @@ async function main(env=process.env) {
   }
 }
 module.exports={binding,seal,open,validateClaims,verify,main,fetchJSON,WRONG_ENV};
-if(require.main===module || process.argv[1]==='-')main().catch(()=>{process.stdout.write('{"witness_status":"failed"}\n');process.exitCode=1;});
+if(require.main===module || process.argv[1]==='-')main().catch(error=>{process.stdout.write(JSON.stringify({witness_status:'failed',phase,reason:error.code==='subject'?'subject':'validation'})+'\n');process.exitCode=1;});

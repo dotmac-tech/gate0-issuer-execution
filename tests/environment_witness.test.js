@@ -7,8 +7,8 @@ const pem=recipient.publicKey.export({type:'spki',format:'pem'});
 const env={GITHUB_REPOSITORY:'dotmac-tech/gate0-issuer-execution',GITHUB_REPOSITORY_ID:'1397614140',GITHUB_REPOSITORY_OWNER_ID:'335992433',GITHUB_REF:'refs/heads/main',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_WORKFLOW_REF:'dotmac-tech/gate0-issuer-execution/.github/workflows/gate0-issuer.yml@refs/heads/main',GITHUB_SHA:'a'.repeat(40),GITHUB_RUN_ID:'123',GITHUB_RUN_ATTEMPT:'1'};
 const jwks={keys:[{...key.publicKey.export({format:'jwk'}),kid:'fixture',alg:'RS256',use:'sig'}]};
 function fixture(kind='missing_environment',changes={},header={}) {
- const claims={repository:env.GITHUB_REPOSITORY,repository_id:'1397614140',repository_owner_id:'335992433',ref:env.GITHUB_REF,workflow_ref:env.GITHUB_WORKFLOW_REF,event_name:'workflow_dispatch',workflow_sha:env.GITHUB_SHA,run_id:'123',run_attempt:'1',runner_environment:'github-hosted',iss:'https://token.actions.githubusercontent.com',aud:'urn:dotmac:gate0:rehearsal-issuer',exp:1300,iat:999,nbf:999,sub:'repo:'+env.GITHUB_REPOSITORY+':ref:refs/heads/main'};
- if(kind==='wrong_environment'){claims.environment=W.WRONG_ENV;claims.sub='repo:'+env.GITHUB_REPOSITORY+':environment:'+W.WRONG_ENV;}
+ const claims={repository:env.GITHUB_REPOSITORY,repository_id:'1397614140',repository_owner_id:'335992433',ref:env.GITHUB_REF,workflow_ref:env.GITHUB_WORKFLOW_REF,event_name:'workflow_dispatch',workflow_sha:env.GITHUB_SHA,run_id:'123',run_attempt:'1',runner_environment:'github-hosted',iss:'https://token.actions.githubusercontent.com',aud:'urn:dotmac:gate0:rehearsal-issuer',exp:1300,iat:999,nbf:999,sub:'repo:dotmac-tech@335992433/gate0-issuer-execution@1397614140:ref:refs/heads/main'};
+ if(kind==='wrong_environment'){claims.environment=W.WRONG_ENV;claims.sub='repo:dotmac-tech@335992433/gate0-issuer-execution@1397614140:environment:'+W.WRONG_ENV;}
  Object.assign(claims,changes);
  const encoded=[{alg:'RS256',kid:'fixture',...header},claims].map(x=>Buffer.from(JSON.stringify(x)).toString('base64url')).join('.');
  return encoded+'.'+C.sign('RSA-SHA256',Buffer.from(encoded),key.privateKey).toString('base64url');
@@ -72,4 +72,12 @@ test('producer writes ciphertext only; consumer verifies and returns JWT over pr
 });
 test('network response cap fails closed',async()=>{
  const old=global.fetch;try{global.fetch=async()=>new Response('a'.repeat(65537));await A.rejects(()=>W.fetchJSON('https://fixture.invalid'));}finally{global.fetch=old;}
+});
+
+test('legacy and substituted immutable subjects fail closed',()=>{
+ for(const kind of ['missing_environment','wrong_environment']){
+  const context=kind==='missing_environment'?':ref:refs/heads/main':':environment:'+W.WRONG_ENV;
+  for(const prefix of ['repo:'+env.GITHUB_REPOSITORY,'repo:dotmac-tech@1/gate0-issuer-execution@1397614140','repo:dotmac-tech@335992433/gate0-issuer-execution@1'])
+   A.throws(()=>W.verify(fixture(kind,{sub:prefix+context}),env,kind,jwks,1000));
+ }
 });
