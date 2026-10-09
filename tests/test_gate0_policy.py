@@ -27,7 +27,7 @@ class Gate0PolicyTests(unittest.TestCase):
     def test_privileged_workflow_bytes_remain_at_admitted_digest(self) -> None:
         self.assertEqual(
             sha256(EXPECTED_WORKFLOWS["gate0-issuer.yml"].encode("utf-8")).hexdigest(),
-            "052bbc537857c936f03cd9bfd0f8c76f954f598a9ff612ec666fb366bfe476c0",
+            "331a4ddd2b0e5fa0951766a72d57472fd4734b0d47a808d80e83dab3b1fe0a8f",
         )
 
     def test_privileged_boundary_mutations_fail(self) -> None:
@@ -40,6 +40,7 @@ class Gate0PolicyTests(unittest.TestCase):
             "environment": ("environment: rehearsal-issuer-protected", "environment: unprotected"),
             "runner group": ("group: gate0-issuer-protected", "group: general"),
             "token permission": ("id-token: write", "contents: write"),
+            "expiry window": ("timeout-minutes: 12", "timeout-minutes: 60"),
             "action boundary": ("        shell: bash", "        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n        shell: bash"),
             "refusal": ("          exit 1", "          exit 0"),
         }

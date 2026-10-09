@@ -13,8 +13,8 @@ job schedules only for a manual dispatch from `main`. It requests only
 `id-token: write` for its job,
 uses the protected Environment and selected runner group, and exits with
 failure because no safe real issuer connector is installed. A failed run is
-not issuer-readiness evidence. It requests no OIDC token, issues no lease,
-and makes no target connection.
+not issuer-readiness evidence. Its bounded proof requests OIDC and measures a
+scoped certificate; it issues no rehearsal lease and makes no target connection.
 
 The drift check is maintained in this same repository: a PR can change the
 workflow, checker, and tests together. It detects accidental changes, **not**
@@ -31,11 +31,12 @@ Do not register or attach a privileged runner based on this source or a green
 static check. Public source, variables, logs, and artifacts must contain no
 secrets, credentials, host addresses, or private topology.
 
-The temporary negative scheduling probes reintroduced at
+Historical scheduling-probe source: the temporary probes reintroduced at
 `299c1f778c2f41038d2d668d6ceea2dc104859ea` are retired in this source:
-`policy.yml` again has only the GitHub-hosted `source_policy` job, triggered by
-pull requests and pushes to `main`. The privileged issuer workflow remains
-byte-identical. Source removal does not prove the live negative observations,
+`policy.yml` has only the GitHub-hosted `source_policy` job, triggered by
+pull requests and pushes to `main`. That retirement preserved the then-current
+issuer workflow; the A8 amendments below deliberately change it under review.
+Source removal does not prove the live negative observations,
 queued-run cancellation, or protected-`main` merge; those require separate
 read-backs. A queued job without a confirmed online protected runner is
 inconclusive, and an assigned runner or executed probe is a failed refusal.
@@ -48,8 +49,7 @@ independent validation; this source makes no readiness claim.
 
 Before the final positive issuer dispatch, record the merged cleanup commit
 SHA, a green `source_policy` check and workflow read-back at that exact SHA,
-the unchanged issuer workflow SHA-256
-`2a62feee21d8236de28e21bb8850c4e0388a39f71cce4338b1c60e0741b876fd`,
+the exact issuer workflow SHA-256 admitted in the reviewed revision's digest test,
 the live negative probe evidence and cancellation, and a fresh runner/group
 online read-back. Only then proceed to the protected dispatch with Michael's
 Environment review. This source change alone is not Gate-0 closure.
@@ -76,7 +76,23 @@ in output. Bearer credentials stay in memory. The resulting batch token cannot
 be individually revoked; it expires within300s. Runner teardown must wait for
 that expiry and prove the group empty afterward.
 
+The expiry amendment retains the same previously accepted GitHub JWT and OpenBao
+batch token only in process memory. It waits past both the observed JWT expiry
+and a conservative batch-token deadline, plus five seconds. It requires healthy
+OpenBao, an expiry-specific JWT login refusal (400), and refusal of the same
+previously successful certificate-signing request with the expired batch token
+(403). A generic login error cannot pass as proof of JWT expiry. Server error
+bodies are reduced privately to one expiry boolean and never logged. There is
+no token refresh or renewal. A monotonic bound stops a stalled or backwards-clock
+wait; unexpectedly long JWT lifetimes fail the proof.
+
+The protected job limit is twelve minutes to accommodate the expiry observation;
+the unprivileged CI job stays at five minutes. Both expiry refusals are required
+before the final public proof is emitted. An operator must also corroborate that
+the live role and signing policy did not change during the measurement window.
+No live expiry result is claimed by source tests or a green CI check.
+
 This is explicitly a **partial A8 proof**, not acceptance: other real-token claim
-mismatches and expiry remain pending the agreed live matrix. The final step still
+mismatches remain pending the agreed live matrix. The final step still
 exits1 and issues no authorization. The existing source-policy baseline remains
 mutable within this repository and is not independent runner-admission evidence.

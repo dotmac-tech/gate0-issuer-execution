@@ -15,7 +15,16 @@ class ProofTests(unittest.TestCase):
   if path==p.SIGN and data['valid_principals']=='dotmac-gate0-controller' and data['ttl']=='600s' and 'extensions' not in data:return 200,{'data':{'signed_key':'PUBLIC_CERT'}}
   return 403,{}
  def run_proof(self,api=None,request=None):
-  return p.prove(api or self.api,request or fixture,'public',b'raw','123','1',lambda c,k,r:{'key_id':k,'measured_lifetime_seconds':600})
+  clock=[time.time()];initial=clock[0];base=api or self.api
+  def phased(path,data=None,token=None):
+   if path=='sys/health':return 200,{'sealed':False}
+   if clock[0]>initial+300:
+    if path=='auth/jwt/login':return 400,{'expiry_error':True}
+    if path==p.SIGN:return 403,{}
+   return base(path,data,token)
+  def pause(seconds):clock[0]+=seconds
+  def expiry(*args):return p.expiration_proof(*args,clock=lambda:clock[0],pause=pause,elapsed=lambda:clock[0])
+  return p.prove(phased,request or fixture,'public',b'raw','123','1',lambda c,k,r:{'key_id':k,'measured_lifetime_seconds':600},expiry)
  def test_executed_workflow_embeds_exact_tested_script(self):
   from pathlib import Path
   root=Path(__file__).resolve().parents[1]
@@ -27,7 +36,8 @@ class ProofTests(unittest.TestCase):
  def test_output_excludes_bearers_and_is_partial(self):
   r=self.run_proof();s=json.dumps(r)
   self.assertNotIn('PRIVATE_FIXTURE_BEARER',s);self.assertNotIn('fixture-signature',s)
-  self.assertEqual(r['remaining_real_claim_and_expiry_matrix'],'pending');self.assertTrue(r['issuance_refused'])
+  self.assertEqual(r['remaining_real_claim_and_expiry_matrix'],'identity-claim matrix pending');self.assertTrue(r['issuance_refused'])
+  self.assertEqual(r['expiry']['oidc_login_http'],400);self.assertEqual(r['expiry']['openbao_sign_http'],403)
  def test_wrong_claim_expiry_or_run_never_reaches_login(self):
   for change in [*({k:'wrong'} for k in p.CLAIMS),{'exp':int(time.time())-1},{'run_id':'456'},{'run_attempt':'2'}]:
    calls=[]
@@ -49,6 +59,50 @@ class ProofTests(unittest.TestCase):
     if bad=='extensions' and path==p.SIGN and 'extensions' in data:return 200,{}
     return self.api(path,data,token)
    with self.subTest(bad=bad),self.assertRaises(ValueError):self.run_proof(api)
+
+class ExpiryTests(unittest.TestCase):
+ def test_http_error_body_is_reduced_to_expiry_boolean(self):
+  import io,ipaddress,os,subprocess,urllib.error
+  from unittest.mock import patch
+  address=str(ipaddress.ip_network('100.64.0.0/10').network_address+1)
+  for message,expected in [('token is expired (exp): PRIVATE_ERROR_BODY',True),('permission denied PRIVATE_ERROR_BODY',False)]:
+   error=urllib.error.HTTPError('https://fixture.invalid',400,'fixture',{},io.BytesIO(json.dumps({'errors':[message]}).encode()))
+   with patch.dict(os.environ,{'A8_BAO_ADDR':'http://'+address+':8200'}),patch.object(p.subprocess,'run',return_value=subprocess.CompletedProcess([],0,b'[{"dev":"wg0"}]')),patch.object(p.OPENER,'open',side_effect=error):
+    status,result=p.bao_client()('auth/jwt/login',{'jwt':'PRIVATE_JWT'})
+   self.assertEqual(status,400);self.assertEqual(result,{'expiry_error':expected})
+   self.assertNotIn('PRIVATE',json.dumps(result))
+ def run_expiry(self,bad=None,jwt_exp=1200):
+  clock=[1000.0];calls=[]
+  def api(path,data=None,token=None):
+   calls.append((path,data,token,clock[0]))
+   if path=='sys/health':return (503,{'sealed':True}) if bad=='health' else (200,{'sealed':False})
+   if path=='auth/jwt/login':
+    if bad=='jwt-success':return 200,{'auth':{'client_token':'UNEXPECTED_BEARER'}}
+    return 400,{'expiry_error':bad!='wrong-reason'}
+   return (200,{}) if bad=='bao-success' else (403,{})
+  def pause(seconds):clock[0]+=seconds
+  result=p.expiration_proof(api,'ORIGINAL_JWT','ORIGINAL_BAO',{'public_key':'PUBLIC'},jwt_exp,1300,
+   clock=lambda:clock[0],pause=pause,elapsed=lambda:clock[0])
+  return result,calls
+ def test_waits_for_later_deadline_and_reuses_original_credentials(self):
+  for jwt_exp,deadline in ((1200,1305),(1400,1405)):
+   result,calls=self.run_expiry(jwt_exp=jwt_exp)
+   self.assertEqual(result['not_before_epoch'],deadline)
+   self.assertTrue(all(c[3]>=deadline for c in calls))
+   self.assertEqual(calls[1][1]['jwt'],'ORIGINAL_JWT');self.assertEqual(calls[2][2],'ORIGINAL_BAO')
+   self.assertNotIn('ORIGINAL_',json.dumps(result));self.assertNotIn('PUBLIC',json.dumps(result))
+ def test_expiry_requires_both_refusals_correct_reason_and_healthy_server(self):
+  for bad in ('health','jwt-success','wrong-reason','bao-success'):
+   with self.subTest(bad=bad),self.assertRaises(ValueError):self.run_expiry(bad)
+ def test_long_jwt_lifetime_stops_before_any_expiry_probe(self):
+  with self.assertRaises(ValueError):self.run_expiry(jwt_exp=2000)
+ def test_backwards_wall_clock_does_not_wait_forever(self):
+  monotonic=[0];calls=[]
+  def pause(seconds):monotonic[0]+=seconds
+  with self.assertRaises(ValueError):
+   p.expiration_proof(lambda *a:calls.append(a),'JWT','BAO',{},1100,1200,
+    clock=lambda:1000,pause=pause,elapsed=lambda:monotonic[0])
+  self.assertEqual(calls,[])
 
 @unittest.skipUnless(__import__('subprocess').check_output(['openssl','version']).startswith(b'OpenSSL 3.'), 'Linux canary requires OpenSSL3; LibreSSL is unsupported')
 class CertificateTests(unittest.TestCase):
