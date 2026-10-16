@@ -4,7 +4,17 @@ Public execution surface for the protected Gate-0 rehearsal issuer. Platform CP
 owns the operator workflow and readiness receipt. This repository owns neither
 issuer decisions nor target execution authority.
 
-Current source is **provisional**. The `Gate-0 source drift check` runs on a
+This local branch proposes the E producer workflow described at the end of this
+file. It is uncommitted and unqualified; execution repository main is unchanged.
+The same-repository drift checker cannot independently admit it. No runner,
+protected execution, native installation or publication is authorized by source.
+
+## Historical A8 source notes — c4604147
+
+The following notes describe the archived A8 workflow at c4604147, preserved in
+`tests/fixtures/gate0-issuer-a8-c4604147.yml`. They do not describe the proposed
+E workflow or claim A8 acceptance. Historical pending items require their own
+current evidence. The original source was **provisional**. The `Gate-0 source drift check` runs on a
 GitHub-hosted runner for pull requests and pushes to `main`; it checks an exact
 allowlist of the three workflow files with Python's standard library. Run it
 locally with `python3 -B -m unittest discover -s tests -v`. The protected workflow
@@ -185,3 +195,21 @@ Never reuse a recipient or envelope. Source changes require exact-head review,
 then a fresh disposable proof and both normal Environment reviews. No live event
 proof, policy change, residual acceptance or Gate0 allocation is implied by tests.
 GitHub event semantics: https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#repository_dispatch
+
+
+## Local E producer source proposal
+
+This branch proposes a single protected E producer job. It is not an installed or qualified runtime and does not close Gate 0. The previous A8 workflow is preserved byte-for-byte in `tests/fixtures/gate0-issuer-a8-c4604147.yml`; its embedding tests establish historical source consistency, not current E proof. Outstanding A8 obligations remain.
+
+The proposed job invokes the fixed installed CP courier and transfer commands, then uploads only the encrypted evidence and public projection. It supplies no root credentials or private proof payloads. The pinned upload-artifact action uses Node 24; its supplier/runtime closure, fixed binary path, runner binding and protected source policy require independent native and owner review before activation. The same-repository source check is mutable and cannot independently establish admission.
+
+Draft creation occurs after the producer job completes. B custody verification, fresh exact-summary human review, separately protected publication and independent whole-run final readback remain subsequent operations. No publication workflow or operational authorization is supplied by this proposal.
+
+
+## Public E operation workflow proposal
+
+`gate0-e-publication.yml` proposes a separate manual/main-only public operation job. Its dedicated runner-group name is a proposal, not an existing or admitted resource; it reuses the existing protected Environment but still needs fresh protection/reviewer readback for each selected run. No group creation, runner attachment, host choice, credential provisioning, dispatch or publication is authorized by this source. Default mode refuses.
+
+The job has no GitHub token permissions and no third-party actions. It invokes only the fixed installed CP draft or publication command; separately qualified native credentials remain private fixed files. Publish inputs contain only the B-summary digest and draft/producer IDs, appear in the exact review title and are checked against protected native selections and real API facts before mutation. Workflow code cannot write those selections. Draft preparation does not accept evidence.
+
+B must complete private verification before the specific publication review. Final readback runs separately after the whole publication workflow and runner terminate; it is deliberately absent from this job. The finite root manager, off-host registration retirement, isolated runtime, exact repository credential scopes and dedicated group restriction require their reviewed operational packet. The proposed five-minute job timeout does not replace the externally enforced original attempt deadline.

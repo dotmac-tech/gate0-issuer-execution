@@ -24,10 +24,10 @@ class Gate0PolicyTests(unittest.TestCase):
     def test_canonical_workflows_pass(self) -> None:
         self.assertEqual(policy_errors(self.root), [])
 
-    def test_privileged_workflow_bytes_remain_at_admitted_digest(self) -> None:
+    def test_proposed_producer_workflow_bytes_match_review_candidate(self) -> None:
         self.assertEqual(
             sha256(EXPECTED_WORKFLOWS["gate0-issuer.yml"].encode("utf-8")).hexdigest(),
-            "1058789d5519f62ef0b880549372f980049a8ebd7b29d8978e4a340aa975dc5c",
+            "127401d6d3f718d7a3900a5c426e01086b25175e2d9bc9759485f952adc39bc3",
         )
 
     def test_privileged_boundary_mutations_fail(self) -> None:
@@ -43,6 +43,17 @@ class Gate0PolicyTests(unittest.TestCase):
             "expiry window": ("timeout-minutes: 12", "timeout-minutes: 60"),
             "action boundary": ("        shell: bash", "        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n        shell: bash"),
             "refusal": ("          exit 1", "          exit 0"),
+            "explicit mode": ('"$GATE0_E_MODE" != "e-readiness"', '"$GATE0_E_MODE" != "refuse"'),
+            "repository identity": ("github.repository_id == '1397614140'", "github.repository_id == '1'"),
+            "owner identity": ("github.repository_owner_id == '335992433'", "github.repository_owner_id == '1'"),
+            "courier binary": ("/opt/dotmac-gate0/runtime/bin/dotmac-platform gate0 courier-original-oidc", "dotmac-platform gate0 courier-original-oidc"),
+            "transfer binary": ("/opt/dotmac-gate0/runtime/bin/dotmac-platform gate0 await-e-transfer", "dotmac-platform gate0 await-e-transfer"),
+            "pinned archive supplier": ("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", "actions/upload-artifact@main"),
+            "cipher-only path": ("/run/dotmac-gate0-e-transfer/gate0-evidence.pgp", "/run/dotmac-gate0-e-private/collection.json"),
+            "missing artifact": ("if-no-files-found: error", "if-no-files-found: ignore"),
+            "no clobber": ("overwrite: false", "overwrite: true"),
+            "no hidden files": ("include-hidden-files: false", "include-hidden-files: true"),
+            "zip format": ("archive: true", "archive: false"),
         }
         path = self.workflows / "gate0-issuer.yml"
         original = EXPECTED_WORKFLOWS[path.name]
@@ -53,9 +64,14 @@ class Gate0PolicyTests(unittest.TestCase):
                 self.assertTrue(policy_errors(self.root))
         path.write_text(original, encoding="utf-8")
 
-    def test_all_witness_embeddings_match_tested_source(self) -> None:
+    def test_historical_a8_fixture_is_original_source(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        workflow = (root / ".github/workflows/gate0-issuer.yml").read_text()
+        raw = (root / "tests/fixtures/gate0-issuer-a8-c4604147.yml").read_bytes()
+        self.assertEqual(sha256(raw).hexdigest(), "1058789d5519f62ef0b880549372f980049a8ebd7b29d8978e4a340aa975dc5c")
+
+    def test_historical_a8_witness_embeddings_match_tested_source(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / "tests/fixtures/gate0-issuer-a8-c4604147.yml").read_text()
         import re
         workflow += (root / '.github/workflows/gate0-negative-witness.yml').read_text()
         bodies = re.findall(r"<<'A8_ENV_WITNESS_JS'\n(.*?)          A8_ENV_WITNESS_JS\n", workflow, re.S)
@@ -79,6 +95,33 @@ class Gate0PolicyTests(unittest.TestCase):
                 self.assertIn(old, original)
                 path.write_text(original.replace(old, new, 1))
                 self.assertTrue(policy_errors(self.root))
+
+    def test_public_operation_boundaries_refuse_drift(self) -> None:
+        path = self.workflows / "gate0-e-publication.yml"
+        original = EXPECTED_WORKFLOWS[path.name]
+        changes = (
+            ("  workflow_dispatch:", "  pull_request_target:\n  workflow_dispatch:"),
+            ("github.event_name == 'workflow_dispatch'", "true"),
+            ("github.ref == 'refs/heads/main'", "true"),
+            ("github.repository_id == '1397614140'", "true"),
+            ("github.repository_owner_id == '335992433'", "true"),
+            ("group: gate0-e-publication-protected", "group: gate0-issuer-protected"),
+            ("environment: rehearsal-issuer-protected", "environment: unprotected"),
+            ("permissions: {}", "permissions: write-all"),
+            ("timeout-minutes: 5", "timeout-minutes: 60"),
+            ("default: refuse", "default: publish"),
+            ("^[a-f0-9]{64}$", ".*"),
+            ("^[1-9][0-9]*$", ".*"),
+            ("/opt/dotmac-gate0/runtime/bin/dotmac-platform gate0 prepare-e-draft", "dotmac-platform gate0 prepare-e-draft"),
+            ("/opt/dotmac-gate0/runtime/bin/dotmac-platform gate0 publish-e", "dotmac-platform gate0 publish-e"),
+            ("exit 1", "exit 0"),
+        )
+        for old, new in changes:
+            with self.subTest(old=old):
+                self.assertIn(old, original)
+                path.write_text(original.replace(old, new, 1), encoding="utf-8")
+                self.assertTrue(policy_errors(self.root))
+        path.write_text(original, encoding="utf-8")
 
     def test_extra_workflow_cannot_select_protected_group(self) -> None:
         (self.workflows / "pr.yml").write_text(
