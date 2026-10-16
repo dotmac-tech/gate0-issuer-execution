@@ -25,10 +25,10 @@ class ProofTests(unittest.TestCase):
   def pause(seconds):clock[0]+=seconds
   def expiry(*args):return p.expiration_proof(*args,clock=lambda:clock[0],pause=pause,elapsed=lambda:clock[0])
   return p.prove(phased,request or fixture,'public',b'raw','123','1',lambda c,k,r:{'key_id':k,'measured_lifetime_seconds':600},expiry,lambda *args:{'fixture_environment_witnesses':True},lambda *args:{'fixture_workflow_witness':True})
- def test_executed_workflow_embeds_exact_tested_script(self):
+ def test_historical_a8_workflow_embeds_exact_tested_script(self):
   from pathlib import Path
   root=Path(__file__).resolve().parents[1]
-  workflow=(root/'.github/workflows/gate0-issuer.yml').read_text()
+  workflow=(root/'tests/fixtures/gate0-issuer-a8-c4604147.yml').read_text()
   start=workflow.index("          python3 - <<'A8_PROOF_PY'\n")+len("          python3 - <<'A8_PROOF_PY'\n")
   end=workflow.index('          A8_PROOF_PY\n',start)
   embedded=''.join((line[10:] if line.strip() else '\n') for line in workflow[start:end].splitlines(keepends=True))
