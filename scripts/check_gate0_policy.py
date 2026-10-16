@@ -1,4 +1,4 @@
-"""Detect drift from the three provisional workflow source files.
+"""Detect drift from the four proposed workflow source files.
 
 The exact allowlist is mutable in this same repository as the checked files.
 It catches accidental drift, not a malicious PR changing both the baseline
@@ -266,6 +266,71 @@ jobs:
           module.exports={binding,seal,open,validateClaims,verify,main,fetchJSON,WRONG_ENV};
           if(require.main===module || process.argv[1]==='-')main().catch(error=>{process.stdout.write(JSON.stringify({witness_status:'failed',phase,reason:error.code==='subject'?'subject':'validation'})+'\n');process.exitCode=1;});
           A8_ENV_WITNESS_JS
+''',
+    'gate0-e-publication.yml': r'''name: Gate-0 E public operations (candidate)
+run-name: ${{ inputs.mode == 'publish' && format('Gate0 E publication summary {0} draft {1} producer {2}', inputs.summary_digest, inputs.draft_release_id, inputs.producer_run_id) || 'Gate0 E draft preparation' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Explicit reviewed public operation
+        required: true
+        default: refuse
+        type: choice
+        options: [refuse, prepare-draft, publish]
+      summary_digest:
+        description: Public B verification summary SHA256, without prefix
+        required: false
+        default: ''
+        type: string
+      draft_release_id:
+        description: Exact B-verified draft release ID
+        required: false
+        default: ''
+        type: string
+      producer_run_id:
+        description: Exact completed E producer run ID
+        required: false
+        default: ''
+        type: string
+
+permissions: {}
+
+jobs:
+  gate0_e_public_operation:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'dotmac-tech/gate0-issuer-execution' && github.repository_id == '1397614140' && github.repository_owner_id == '335992433' }}
+    runs-on:
+      group: gate0-e-publication-protected
+    environment: rehearsal-issuer-protected
+    permissions: {}
+    timeout-minutes: 5
+    steps:
+      - name: Execute selected finite public operation
+        env:
+          GATE0_E_MODE: ${{ inputs.mode }}
+          GATE0_E_SUMMARY: ${{ inputs.summary_digest }}
+          GATE0_E_DRAFT: ${{ inputs.draft_release_id }}
+          GATE0_E_PRODUCER: ${{ inputs.producer_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$GATE0_E_MODE" in
+            prepare-draft)
+              exec /opt/dotmac-gate0/runtime/bin/dotmac-platform gate0 prepare-e-draft
+              ;;
+            publish)
+              if [[ ! "$GATE0_E_SUMMARY" =~ ^[a-f0-9]{64}$ ]] || [[ ! "$GATE0_E_DRAFT" =~ ^[1-9][0-9]*$ ]] || [[ ! "$GATE0_E_PRODUCER" =~ ^[1-9][0-9]*$ ]]; then
+                echo PUBLIC_E_EXECUTION_REFUSED
+                exit 1
+              fi
+              exec /opt/dotmac-gate0/runtime/bin/dotmac-platform gate0 publish-e
+              ;;
+            *)
+              echo PUBLIC_E_EXECUTION_REFUSED
+              exit 1
+              ;;
+          esac
 ''',
 }
 

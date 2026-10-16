@@ -96,6 +96,33 @@ class Gate0PolicyTests(unittest.TestCase):
                 path.write_text(original.replace(old, new, 1))
                 self.assertTrue(policy_errors(self.root))
 
+    def test_public_operation_boundaries_refuse_drift(self) -> None:
+        path = self.workflows / "gate0-e-publication.yml"
+        original = EXPECTED_WORKFLOWS[path.name]
+        changes = (
+            ("  workflow_dispatch:", "  pull_request_target:\n  workflow_dispatch:"),
+            ("github.event_name == 'workflow_dispatch'", "true"),
+            ("github.ref == 'refs/heads/main'", "true"),
+            ("github.repository_id == '1397614140'", "true"),
+            ("github.repository_owner_id == '335992433'", "true"),
+            ("group: gate0-e-publication-protected", "group: gate0-issuer-protected"),
+            ("environment: rehearsal-issuer-protected", "environment: unprotected"),
+            ("permissions: {}", "permissions: write-all"),
+            ("timeout-minutes: 5", "timeout-minutes: 60"),
+            ("default: refuse", "default: publish"),
+            ("^[a-f0-9]{64}$", ".*"),
+            ("^[1-9][0-9]*$", ".*"),
+            ("/opt/dotmac-gate0/runtime/bin/dotmac-platform gate0 prepare-e-draft", "dotmac-platform gate0 prepare-e-draft"),
+            ("/opt/dotmac-gate0/runtime/bin/dotmac-platform gate0 publish-e", "dotmac-platform gate0 publish-e"),
+            ("exit 1", "exit 0"),
+        )
+        for old, new in changes:
+            with self.subTest(old=old):
+                self.assertIn(old, original)
+                path.write_text(original.replace(old, new, 1), encoding="utf-8")
+                self.assertTrue(policy_errors(self.root))
+        path.write_text(original, encoding="utf-8")
+
     def test_extra_workflow_cannot_select_protected_group(self) -> None:
         (self.workflows / "pr.yml").write_text(
             "on: [pull_request]\njobs:\n  probe:\n    runs-on:\n      group: gate0-issuer-protected\n",
